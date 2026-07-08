@@ -9,6 +9,13 @@ from typing import Any, Dict, Optional
 from src.core.exceptions import ConfigurationError
 
 
+RESOLUTION_PRESETS: dict[str, tuple[int, int]] = {
+    "640x480": (640, 480),
+    "1280x720": (1280, 720),
+    "1920x1080": (1920, 1080),
+}
+
+
 @dataclass
 class CameraConfig:
     """Configuration for camera input source."""
@@ -17,25 +24,46 @@ class CameraConfig:
     width: int = 640
     height: int = 480
     fps: float = 30.0
+    max_camera_index: int = 20
+    resolution_preset: str = "640x480"
+    backend: str = "directshow"
 
 
 @dataclass
 class PoseConfig:
-    """Configuration for pose estimation."""
+    """Configuration for pose estimation (MediaPipe Tasks API).
+
+    Attributes:
+        model_complexity: 0=lite, 1=full, 2=heavy.
+        min_detection_confidence: Minimum confidence for pose detection.
+        min_tracking_confidence: Minimum confidence for tracking between frames.
+        static_image_mode: Kept for backward compatibility (unused by Tasks API).
+        model_path: Path to the PoseLandmarker ``.task`` model file. When
+            ``None`` the model is auto-resolved from *model_complexity* and
+            downloaded to ``models/`` if not present.
+    """
 
     model_complexity: int = 2
     min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
     static_image_mode: bool = False
+    model_path: Optional[str] = None
 
 
 @dataclass
 class MotionConfig:
-    """Configuration for motion processing."""
+    """Configuration for motion processing.
+
+    Controls the parameters of the MotionProcessing pipeline. New fields
+    have defaults so existing config files remain valid.
+    """
 
     smoothing_window: int = 5
     velocity_threshold: float = 0.1
     interpolation_enabled: bool = True
+    outlier_threshold: float = 0.15
+    exponential_alpha: float = 0.5
+    visibility_threshold: float = 0.5
 
 
 @dataclass

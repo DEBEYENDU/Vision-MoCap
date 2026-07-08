@@ -35,6 +35,10 @@ class AnimationExportError(VisionMoCapError):
     """Raised when animation export fails."""
 
 
+class RetargetingError(VisionMoCapError):
+    """Raised when motion retargeting fails."""
+
+
 class BlenderIntegrationError(VisionMoCapError):
     """Raised when Blender integration fails."""
 

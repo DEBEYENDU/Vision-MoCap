@@ -7,6 +7,7 @@ from src.config.manager import (
     LoggingConfig,
     MotionConfig,
     PoseConfig,
+    RESOLUTION_PRESETS,
 )
 
 __all__ = [
@@ -18,4 +19,5 @@ __all__ = [
     "LoggingConfig",
     "MotionConfig",
     "PoseConfig",
+    "RESOLUTION_PRESETS",
 ]

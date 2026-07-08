@@ -1,8 +1,10 @@
 """Camera management subsystem for the VisionMoCap application.
 
 Provides camera discovery, selection, frame capture, and FPS monitoring
-using OpenCV's DirectShow backend on Windows for broad compatibility.
+using configurable OpenCV backends.
 """
+
+from __future__ import annotations
 
 import logging
 import time
@@ -13,36 +15,48 @@ import cv2
 import numpy as np
 from numpy.typing import NDArray
 
+from src.camera.backend import Backend
 from src.camera.device import CameraDevice
-from src.config.manager import CameraConfig
+from src.config.manager import RESOLUTION_PRESETS, CameraConfig
 from src.core.exceptions import CameraError
 
 
 class _FPSMonitor:
-    """Tracks frame rate using a sliding window of frame timestamps.
+    """Tracks frame rate statistics over a sliding window of timestamps.
 
-    Maintains a fixed-size deque of timestamps and computes FPS as the
-    number of frame intervals divided by the total elapsed time.
+    Maintains a fixed-size deque of frame timestamps and per-frame
+    intervals, exposing current, average, minimum, and maximum FPS.
     """
 
     def __init__(self, window_size: int = 30) -> None:
         self._timestamps: deque[float] = deque(maxlen=window_size)
+        self._intervals: deque[float] = deque(maxlen=window_size)
 
     def tick(self) -> None:
-        """Record a new frame timestamp."""
-        self._timestamps.append(time.perf_counter())
+        """Record a new frame timestamp and the interval since the last."""
+        now = time.perf_counter()
+        if self._timestamps:
+            self._intervals.append(now - self._timestamps[-1])
+        self._timestamps.append(now)
 
     def reset(self) -> None:
-        """Clear all recorded timestamps."""
+        """Clear all recorded timestamps and intervals."""
         self._timestamps.clear()
+        self._intervals.clear()
 
     @property
-    def fps(self) -> float:
-        """Compute the average FPS over the current sliding window.
+    def current_fps(self) -> float:
+        """FPS based on the interval between the last two frames."""
+        if len(self._timestamps) < 2:
+            return 0.0
+        interval = self._timestamps[-1] - self._timestamps[-2]
+        if interval <= 0.0:
+            return 0.0
+        return 1.0 / interval
 
-        Returns:
-            Measured frames per second, or 0.0 if fewer than 2 frames.
-        """
+    @property
+    def average_fps(self) -> float:
+        """Average FPS over the entire sliding window."""
         if len(self._timestamps) < 2:
             return 0.0
         elapsed = self._timestamps[-1] - self._timestamps[0]
@@ -50,50 +64,81 @@ class _FPSMonitor:
             return 0.0
         return (len(self._timestamps) - 1) / elapsed
 
+    @property
+    def min_fps(self) -> float:
+        """Minimum FPS observed in the sliding window."""
+        if not self._intervals:
+            return 0.0
+        return 1.0 / max(self._intervals)
+
+    @property
+    def max_fps(self) -> float:
+        """Maximum FPS observed in the sliding window."""
+        if not self._intervals:
+            return 0.0
+        return 1.0 / min(self._intervals)
+
 
 class CameraManager:
     """Manages camera discovery, selection, and frame capture operations.
 
-    Uses OpenCV's DirectShow (CAP_DSHOW) backend on Windows for broad
-    compatibility with laptop webcams, USB webcams, DroidCam, and Iriun
-    Webcam. Provides a clean API for the full camera lifecycle including
-    discovery, open, close, switch, frame capture, and FPS measurement.
+    Uses the configurable OpenCV backend (default DirectShow on Windows).
+    Provides a clean API for the full camera lifecycle: discovery, open,
+    close, switch, frame capture, and comprehensive FPS statistics.
 
-    Supports context manager protocol for safe resource handling::
+    Supports the context manager protocol for safe resource handling::
 
         with CameraManager(config) as mgr:
             mgr.open_camera(0)
             frame = mgr.get_frame()
-    """
 
-    _DEFAULT_BACKEND = cv2.CAP_DSHOW
-    _MAX_DISCOVERY_INDEX = 10
+    Every detected camera is treated uniformly — no hardcoded logic for
+    DroidCam, Iriun, or OBS Virtual Camera. All DirectShow-compatible
+    devices are discovered and managed identically.
+    """
 
     def __init__(self, config: Optional[CameraConfig] = None) -> None:
         self._config = config or CameraConfig()
+        self._backend = self._resolve_backend()
         self._capture: Optional[cv2.VideoCapture] = None
         self._current_device: Optional[CameraDevice] = None
         self._fps_monitor = _FPSMonitor()
         self._logger = logging.getLogger(self.__class__.__name__)
         self._camera_list: List[CameraDevice] = []
 
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
     def discover_cameras(self) -> List[CameraDevice]:
         """Probe camera indices and return a list of available devices.
 
-        Tests indices 0 through 9 using the DirectShow backend. Each index
-        is briefly opened and a test frame is attempted to confirm that the
-        camera is responsive.
+        Tests indices 0 through ``max_camera_index - 1`` using the
+        configured backend. Each index is briefly opened and a test frame
+        is attempted to confirm responsiveness.
 
         Returns:
             A list of CameraDevice instances for every detected camera.
         """
         self._camera_list.clear()
-        self._logger.info("Discovering available cameras...")
-        for index in range(self._MAX_DISCOVERY_INDEX):
+        max_index = self._config.max_camera_index
+        self._logger.info(
+            "Discovering cameras (0-%d, backend=%s)...",
+            max_index - 1,
+            self._backend.name.lower(),
+        )
+        for index in range(max_index):
             device = self._probe_camera(index)
             if device is not None:
                 self._camera_list.append(device)
-                self._logger.info("Discovered: %s", device.name)
+                self._logger.info(
+                    "Discovered [%d] %s | %dx%d @ %.1f FPS",
+                    device.index,
+                    device.name,
+                    device.resolution_width,
+                    device.resolution_height,
+                    device.fps,
+                )
         if not self._camera_list:
             self._logger.warning("No cameras found during discovery.")
         return list(self._camera_list)
@@ -102,8 +147,8 @@ class CameraManager:
         """Open a camera by its device index.
 
         Any previously opened camera is released first. The camera is
-        configured with the stored resolution and frame rate settings
-        from CameraConfig.
+        configured with the stored resolution preset and frame rate
+        settings from CameraConfig.
 
         Args:
             index: Zero-based device index of the camera to open.
@@ -121,31 +166,36 @@ class CameraManager:
         self.close_camera()
         self._logger.info("Opening camera %d...", index)
         try:
-            capture = cv2.VideoCapture(index, self._DEFAULT_BACKEND)
+            capture = cv2.VideoCapture(index, self._backend.value)
             if not capture.isOpened():
                 raise CameraError(f"Failed to open camera {index}.")
             self._apply_config(capture)
             self._capture = capture
-            self._current_device = CameraDevice(
-                index=index,
-                name=f"Camera {index}",
-                backend=self._DEFAULT_BACKEND,
-                is_available=True,
-            )
-            self._fps_monitor.reset()
             actual_width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
             actual_height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
             actual_fps = capture.get(cv2.CAP_PROP_FPS)
+            self._current_device = CameraDevice(
+                index=index,
+                name=f"Camera {index}",
+                backend=self._backend,
+                is_available=True,
+                resolution_width=actual_width,
+                resolution_height=actual_height,
+                fps=actual_fps,
+            )
+            self._fps_monitor.reset()
+            requested_w, requested_h = self._resolve_resolution()
             self._logger.info(
                 "Camera %d opened: %dx%d @ %.1f FPS "
-                "(requested: %dx%d @ %.1f FPS).",
+                "(requested: %dx%d @ %.1f FPS, backend=%s).",
                 index,
                 actual_width,
                 actual_height,
                 actual_fps,
-                self._config.width,
-                self._config.height,
+                requested_w,
+                requested_h,
                 self._config.fps,
+                self._backend.name.lower(),
             )
             return True
         except CameraError:
@@ -198,12 +248,9 @@ class CameraManager:
     def get_frame(self) -> Optional[NDArray[np.uint8]]:
         """Read the next frame from the currently opened camera.
 
-        The returned frame is a numpy array of shape (H, W, 3) in BGR
-        channel order, as produced by OpenCV.
-
         Returns:
-            The captured frame, or None if the frame could not be read
-            (e.g. the camera was disconnected).
+            The captured frame as a BGR numpy array of shape
+            ``(H, W, 3)``, or None if the frame could not be read.
 
         Raises:
             CameraError: If no camera is currently open.
@@ -222,17 +269,6 @@ class CameraManager:
         except Exception as e:
             raise CameraError(f"Error reading frame: {e}", cause=e)
 
-    def get_fps(self) -> float:
-        """Return the measured frame rate based on recent frame timestamps.
-
-        The FPS is computed from a sliding window of the last 30 frame
-        timestamps, providing a stable real-time measurement.
-
-        Returns:
-            Measured frames per second, or 0.0 if insufficient data.
-        """
-        return self._fps_monitor.fps
-
     def get_current_camera(self) -> Optional[CameraDevice]:
         """Return metadata for the currently active camera.
 
@@ -242,27 +278,61 @@ class CameraManager:
         """
         return self._current_device
 
-    def __enter__(self) -> "CameraManager":
+    def get_current_fps(self) -> float:
+        """FPS based on the interval between the last two frames."""
+        return self._fps_monitor.current_fps
+
+    def get_average_fps(self) -> float:
+        """Average FPS over the recent sliding window (~30 frames)."""
+        return self._fps_monitor.average_fps
+
+    def get_min_fps(self) -> float:
+        """Minimum FPS observed over the recent sliding window."""
+        return self._fps_monitor.min_fps
+
+    def get_max_fps(self) -> float:
+        """Maximum FPS observed over the recent sliding window."""
+        return self._fps_monitor.max_fps
+
+    def get_fps(self) -> float:
+        """Alias for :meth:`get_average_fps` (backward compatibility)."""
+        return self.get_average_fps()
+
+    # ------------------------------------------------------------------
+    # Context manager
+    # ------------------------------------------------------------------
+
+    def __enter__(self) -> CameraManager:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close_camera()
 
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
     def _probe_camera(self, index: int) -> Optional[CameraDevice]:
         """Test whether a camera index is available and responsive."""
         capture = None
         try:
-            capture = cv2.VideoCapture(index, self._DEFAULT_BACKEND)
+            capture = cv2.VideoCapture(index, self._backend.value)
             if not capture.isOpened():
                 return None
             ret, _ = capture.read()
             if not ret:
                 return None
+            width = int(capture.get(cv2.CAP_PROP_FRAME_WIDTH))
+            height = int(capture.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            fps = capture.get(cv2.CAP_PROP_FPS)
             return CameraDevice(
                 index=index,
                 name=f"Camera {index}",
-                backend=self._DEFAULT_BACKEND,
+                backend=self._backend,
                 is_available=True,
+                resolution_width=width,
+                resolution_height=height,
+                fps=fps,
             )
         except Exception:
             return None
@@ -272,24 +342,44 @@ class CameraManager:
 
     def _apply_config(self, capture: cv2.VideoCapture) -> None:
         """Apply resolution and FPS settings from CameraConfig."""
-        width_ok = capture.set(
-            cv2.CAP_PROP_FRAME_WIDTH, self._config.width
-        )
+        width, height = self._resolve_resolution()
+        width_ok = capture.set(cv2.CAP_PROP_FRAME_WIDTH, width)
         if not width_ok:
             self._logger.warning(
-                "Failed to set frame width to %d.", self._config.width
+                "Failed to set frame width to %d.", width
             )
-        height_ok = capture.set(
-            cv2.CAP_PROP_FRAME_HEIGHT, self._config.height
-        )
+        height_ok = capture.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
         if not height_ok:
             self._logger.warning(
-                "Failed to set frame height to %d.", self._config.height
+                "Failed to set frame height to %d.", height
             )
-        fps_ok = capture.set(
-            cv2.CAP_PROP_FPS, self._config.fps
-        )
+        fps_ok = capture.set(cv2.CAP_PROP_FPS, self._config.fps)
         if not fps_ok:
             self._logger.warning(
                 "Failed to set FPS to %.1f.", self._config.fps
             )
+
+    def _resolve_resolution(self) -> tuple[int, int]:
+        """Return (width, height) from the configured preset or raw values."""
+        preset = self._config.resolution_preset
+        if preset:
+            resolved = RESOLUTION_PRESETS.get(preset)
+            if resolved is not None:
+                return resolved
+            self._logger.warning(
+                "Unknown resolution preset '%s', falling back to %dx%d.",
+                preset,
+                self._config.width,
+                self._config.height,
+            )
+        return self._config.width, self._config.height
+
+    def _resolve_backend(self) -> Backend:
+        """Convert the config backend string to a Backend enum member."""
+        try:
+            return Backend.from_string(self._config.backend)
+        except ValueError as e:
+            self._logger.warning(
+                "%s Falling back to DirectShow.", e
+            )
+            return Backend.DIRECTSHOW

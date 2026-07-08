@@ -13,6 +13,7 @@ from src.core.exceptions import (
     GUIError,
     MotionProcessingError,
     PoseEstimationError,
+    RetargetingError,
     VisionMoCapError,
 )
 from src.core.models import (
@@ -42,6 +43,7 @@ __all__ = [
     "Pose",
     "PoseEstimationError",
     "PoseEstimator",
+    "RetargetingError",
     "SKELETON_HIERARCHY",
     "Vector3D",
     "VideoSource",

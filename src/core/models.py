@@ -82,6 +82,18 @@ class Vector3D:
         """Compute the Euclidean norm of the vector."""
         return math.sqrt(self.x**2 + self.y**2 + self.z**2)
 
+    def dot(self, other: "Vector3D") -> float:
+        """Compute the dot product with *other*."""
+        return self.x * other.x + self.y * other.y + self.z * other.z
+
+    def cross(self, other: "Vector3D") -> "Vector3D":
+        """Compute the cross product with *other*."""
+        return Vector3D(
+            self.y * other.z - self.z * other.y,
+            self.z * other.x - self.x * other.z,
+            self.x * other.y - self.y * other.x,
+        )
+
     def normalize(self) -> "Vector3D":
         """Return a unit vector pointing in the same direction."""
         mag = self.magnitude
