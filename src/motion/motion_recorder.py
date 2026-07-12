@@ -1,7 +1,8 @@
 """Motion recording subsystem for the VisionMoCap application.
 
 Accumulates PoseResult objects during a recording session and produces
-a serialisable MotionSequence when recording stops.
+a serialisable MotionSequence when recording stops.  Supports pause,
+resume, and discard in addition to the basic start/stop lifecycle.
 """
 
 from __future__ import annotations
@@ -22,6 +23,10 @@ class MotionRecorder:
     :meth:`record` (no-ops when not recording), then call :meth:`stop`
     to receive a populated MotionSequence.
 
+    Pause and resume allow the operator to temporarily halt frame
+    accumulation without losing the session.  ``elapsed_time`` tracks
+    the wall-clock duration excluding pauses.
+
     The recorder is a stateless accumulator — it holds no reference to
     any camera or detector.
     """
@@ -30,6 +35,9 @@ class MotionRecorder:
         self._buffer: List[PoseResult] = []
         self._start_time: float = 0.0
         self._is_recording: bool = False
+        self._paused: bool = False
+        self._pause_start: float = 0.0
+        self._total_paused: float = 0.0
         self._logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
@@ -43,21 +51,47 @@ class MotionRecorder:
         """
         self._buffer.clear()
         self._start_time = time.perf_counter()
+        self._total_paused = 0.0
+        self._paused = False
         self._is_recording = True
         self._logger.info("Recording started.")
 
     def record(self, pose_result: PoseResult) -> None:
         """Record a single pose result if a session is active.
 
-        This is a no-op when the recorder is not recording, making it
-        safe to call on every frame without checking state first.
+        This is a no-op when the recorder is not recording or is
+        paused, making it safe to call on every frame without
+        checking state first.
 
         Args:
             pose_result: The pose detection result to accumulate.
         """
-        if not self._is_recording:
+        if not self._is_recording or self._paused:
             return
         self._buffer.append(pose_result)
+
+    def pause(self) -> None:
+        """Pause frame accumulation.
+
+        No-op if not currently recording or already paused.
+        """
+        if not self._is_recording or self._paused:
+            return
+        self._paused = True
+        self._pause_start = time.perf_counter()
+        self._logger.info("Recording paused.")
+
+    def resume(self) -> None:
+        """Resume frame accumulation after a pause.
+
+        No-op if not paused.
+        """
+        if not self._paused:
+            return
+        self._total_paused += time.perf_counter() - self._pause_start
+        self._paused = False
+        self._pause_start = 0.0
+        self._logger.info("Recording resumed.")
 
     def stop(self) -> Optional[MotionSequence]:
         """Stop the recording session and produce a MotionSequence.
@@ -69,9 +103,12 @@ class MotionRecorder:
         if not self._is_recording:
             self._logger.warning("stop() called but no session was active.")
             return None
+        if self._paused:
+            self._total_paused += time.perf_counter() - self._pause_start
+            self._paused = False
         self._is_recording = False
         end_time = time.perf_counter()
-        duration = end_time - self._start_time
+        duration = end_time - self._start_time - self._total_paused
         total_frames = len(self._buffer)
         average_fps = total_frames / duration if duration > 0.0 else 0.0
         self._logger.info(
@@ -96,8 +133,13 @@ class MotionRecorder:
         """Discard the current recording without producing a sequence."""
         if self._is_recording:
             self._is_recording = False
+            self._paused = False
             self._buffer.clear()
             self._logger.info("Recording cancelled.")
+
+    def discard(self) -> None:
+        """Alias for :meth:`cancel` with clearer intent."""
+        self.cancel()
 
     # ------------------------------------------------------------------
     # Properties
@@ -109,6 +151,24 @@ class MotionRecorder:
         return self._is_recording
 
     @property
+    def is_paused(self) -> bool:
+        """Whether the recording session is paused."""
+        return self._paused
+
+    @property
     def recorded_frame_count(self) -> int:
         """Number of frames accumulated in the current session."""
         return len(self._buffer)
+
+    @property
+    def elapsed_time(self) -> float:
+        """Wall-clock recording duration excluding pauses (seconds).
+
+        Returns 0.0 if no session is active.
+        """
+        if not self._is_recording and not self._paused:
+            return 0.0
+        elapsed = time.perf_counter() - self._start_time - self._total_paused
+        if self._paused:
+            elapsed -= time.perf_counter() - self._pause_start
+        return max(elapsed, 0.0)

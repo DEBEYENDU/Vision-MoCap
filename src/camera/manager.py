@@ -168,6 +168,7 @@ class CameraManager:
         try:
             capture = cv2.VideoCapture(index, self._backend.value)
             if not capture.isOpened():
+                capture.release()
                 raise CameraError(f"Failed to open camera {index}.")
             self._apply_config(capture)
             self._capture = capture

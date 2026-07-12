@@ -13,6 +13,8 @@ class VisionMoCapError(Exception):
     ) -> None:
         super().__init__(message)
         self.cause = cause
+        if cause is not None:
+            self.__cause__ = cause
 
 
 class ConfigurationError(VisionMoCapError):

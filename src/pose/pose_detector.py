@@ -203,7 +203,11 @@ class PoseDetector:
 
         # Use the first detected pose.
         landmarks = self._extract_landmarks(result.pose_landmarks[0])
-        world_landmarks = self._extract_landmarks(result.pose_world_landmarks[0])
+        world_landmarks = (
+            self._extract_landmarks(result.pose_world_landmarks[0])
+            if result.pose_world_landmarks
+            else []
+        )
 
         confidence = float(
             min((lm.visibility for lm in landmarks), default=0.0)
