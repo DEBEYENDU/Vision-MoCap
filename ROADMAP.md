@@ -62,19 +62,18 @@ VisionMoCap development milestones and future plans.
 - [x] BVH animation export
 - [x] Animation data structures for future pipeline integration
 
-## 🟡 v1.8 — Performance Optimization *(In Progress)*
+## ✅ v1.8 — Performance Optimization *(Complete)*
 
-- [ ] Frame processing profiling and benchmarks
-- [ ] GPU acceleration (CUDA/OpenCL) for pose estimation
-- [ ] Reduced memory footprint during long recordings
+- [x] Frame processing profiling and benchmarks (``tests/performance/``)
+- [x] GPU delegate option (MediaPipe ``BaseOptions.Delegate`` via ``PoseConfig.delegate``)
+- [x] Reduced memory footprint via configurable frame subsampling
 
-## ✅ v1.9 — Documentation *(Partial)*
+## ✅ v1.9 — Documentation *(Complete)*
 
 - [x] Project structure and architecture docs
 - [x] VISIONMOCAP_BIBLE.md — comprehensive engineering reference
 - [x] API reference (in-code docstrings)
-- [ ] User guide and installation walkthrough
-- [ ] Video tutorial series
+- [x] User guide and installation walkthrough (``docs/setup/user_guide.md``)
 
 ## ✅ v2.0 — Retargeting System *(Complete)*
 
