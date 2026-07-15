@@ -80,11 +80,11 @@ VisionMoCap development milestones and future plans.
 - [x] SkeletonMapper for mapping between skeleton definitions
 - [x] Retargeter class with 4 built-in presets
 
-## ⚪ v2.1 — Final Presentation *(Planned)*
+## ✅ v2.1 — Final Presentation *(Complete)*
 
-- [ ] Polished demo with sample recordings
-- [ ] Presentation slides and figures
-- [ ] Formal report with chapters and references
+- [x] Polished demo with sample recordings (``demo/sample_recordings/``)
+- [x] Presentation slide deck (``presentation/slides/presentation_final_2026-07-15.md``)
+- [x] Formal report with 9 chapters and references (``report/chapters/``, ``report/references/``)
 
 ---
 
