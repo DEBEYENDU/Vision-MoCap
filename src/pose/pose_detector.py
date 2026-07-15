@@ -21,6 +21,7 @@ from numpy.typing import NDArray
 
 from src.config.manager import PoseConfig
 from src.core.exceptions import PoseEstimationError
+from src.pose.base import PoseEstimatorBase
 from src.pose.pose_result import Landmark, PoseResult
 
 # ------------------------------------------------------------------
@@ -92,7 +93,7 @@ def _download_model(url: str, dest: Path) -> None:
 # ------------------------------------------------------------------
 
 
-class PoseDetector:
+class PoseDetector(PoseEstimatorBase):
     """MediaPipe Tasks Pose Landmarker wrapper.
 
     Responsibilities are limited to:
@@ -105,9 +106,8 @@ class PoseDetector:
     """
 
     def __init__(self, config: Optional[PoseConfig] = None) -> None:
-        self._config = config or PoseConfig()
+        super().__init__(config or PoseConfig())
         self._landmarker: Optional[mp.tasks.vision.PoseLandmarker] = None
-        self._logger = logging.getLogger(self.__class__.__name__)
 
     # ------------------------------------------------------------------
     # Lifecycle
@@ -139,8 +139,18 @@ class PoseDetector:
                 self._config.model_complexity,
             )
 
+            delegate_map = {
+                "cpu": mp.tasks.BaseOptions.Delegate.CPU,
+                "gpu": mp.tasks.BaseOptions.Delegate.GPU,
+                "xnnpack": mp.tasks.BaseOptions.Delegate.XNNPACK,
+            }
+            delegate = delegate_map.get(
+                self._config.delegate.lower(),
+                mp.tasks.BaseOptions.Delegate.CPU,
+            )
             base_options = mp.tasks.BaseOptions(
-                model_asset_path=str(model_path.resolve())
+                model_asset_path=str(model_path.resolve()),
+                delegate=delegate,
             )
             options = mp.tasks.vision.PoseLandmarkerOptions(
                 base_options=base_options,
@@ -166,6 +176,13 @@ class PoseDetector:
             raise PoseEstimationError(
                 "Failed to initialise MediaPipe Pose Landmarker.", cause=e
             )
+
+    def estimate(self, frame: NDArray[np.uint8]) -> PoseResult:
+        """Run pose estimation on a single BGR frame (ABC interface).
+
+        Delegates to :meth:`detect`.
+        """
+        return self.detect(frame)
 
     def detect(self, frame: NDArray[np.uint8]) -> PoseResult:
         """Run pose inference on a single BGR frame.

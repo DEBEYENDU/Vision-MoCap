@@ -41,11 +41,14 @@ class PoseConfig:
         model_path: Path to the PoseLandmarker ``.task`` model file. When
             ``None`` the model is auto-resolved from *model_complexity* and
             downloaded to ``models/`` if not present.
+        delegate: Compute delegate for inference — ``"cpu"``, ``"gpu"``,
+            or ``"xnnpack"``.
     """
 
     model_complexity: int = 1
     min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
+    delegate: str = "cpu"
     static_image_mode: bool = False
     model_path: Optional[str] = None
 
@@ -64,13 +67,24 @@ class MotionConfig:
     outlier_threshold: float = 0.15
     exponential_alpha: float = 0.5
     visibility_threshold: float = 0.5
+    use_outlier_removal: bool = True
+    use_exponential_smoothing: bool = True
+    use_moving_average: bool = True
+    use_one_euro: bool = False
+    use_savgol: bool = False
+    one_euro_min_cutoff: float = 1.0
+    one_euro_beta: float = 0.007
+    one_euro_derivative_cutoff: float = 1.0
+    savgol_window_length: int = 5
+    savgol_polyorder: int = 2
+    frame_subsample: int = 1
 
 
 @dataclass
 class AnimationConfig:
     """Configuration for animation export."""
 
-    export_format: str = "fbx"
+    export_format: str = "bvh"
     scale_factor: float = 1.0
     apply_smoothing: bool = True
 
@@ -82,6 +96,13 @@ class BlenderConfig:
     blender_executable: str = "blender"
     script_path: str = ""
     auto_launch: bool = False
+
+
+@dataclass
+class GuiConfig:
+    """Configuration for GUI appearance."""
+
+    theme: str = "dark"
 
 
 @dataclass
@@ -103,6 +124,7 @@ class AppConfig:
     motion: MotionConfig = field(default_factory=MotionConfig)
     animation: AnimationConfig = field(default_factory=AnimationConfig)
     blender: BlenderConfig = field(default_factory=BlenderConfig)
+    gui: GuiConfig = field(default_factory=GuiConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
 
 
@@ -218,6 +240,7 @@ class ConfigManager:
             "motion": MotionConfig,
             "animation": AnimationConfig,
             "blender": BlenderConfig,
+            "gui": GuiConfig,
             "logging": LoggingConfig,
         }
         for key, config_cls in field_map.items():

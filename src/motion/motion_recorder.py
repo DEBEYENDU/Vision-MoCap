@@ -31,8 +31,10 @@ class MotionRecorder:
     any camera or detector.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, subsample: int = 1) -> None:
+        self._subsample = max(1, subsample)
         self._buffer: List[PoseResult] = []
+        self._frame_counter: int = 0
         self._start_time: float = 0.0
         self._is_recording: bool = False
         self._paused: bool = False
@@ -59,6 +61,9 @@ class MotionRecorder:
     def record(self, pose_result: PoseResult) -> None:
         """Record a single pose result if a session is active.
 
+        When *subsample* > 1, only every Nth frame is stored, reducing
+        memory usage during long recordings.
+
         This is a no-op when the recorder is not recording or is
         paused, making it safe to call on every frame without
         checking state first.
@@ -67,6 +72,9 @@ class MotionRecorder:
             pose_result: The pose detection result to accumulate.
         """
         if not self._is_recording or self._paused:
+            return
+        self._frame_counter += 1
+        if self._frame_counter % self._subsample != 0:
             return
         self._buffer.append(pose_result)
 

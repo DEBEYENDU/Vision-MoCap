@@ -91,10 +91,12 @@ class TestPlaybackState:
         values = [s.value for s in PlaybackState]
         assert len(values) == len(set(values)), "Enum values must be unique"
 
-    def test_playback_state_independent(self) -> None:
-        """Ensure our PlaybackState is a different type from the motion one."""
+    def test_playback_state_unified(self) -> None:
+        """All PlaybackState exports reference the same enum."""
         from src.motion.motion_player import PlaybackState as MotionPBState
-        assert PlaybackState is not MotionPBState
+        from src.animation.animation_player import PlaybackState as AnimPBState
+        assert PlaybackState is MotionPBState
+        assert PlaybackState is AnimPBState
 
 
 # ---------------------------------------------------------------------------

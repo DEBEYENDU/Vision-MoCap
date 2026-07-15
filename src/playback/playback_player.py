@@ -287,3 +287,11 @@ class PlaybackPlayer:
         if self._sequence is None:
             return 0.0
         return self._sequence.average_fps
+
+    @property
+    def accumulated_time(self) -> float:
+        return self._accumulated_time
+
+    @property
+    def play_start_time(self) -> float:
+        return self._play_start_time

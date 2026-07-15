@@ -1,9 +1,9 @@
 """Status bar widget for the VisionMoCap Studio GUI.
 
 Displays real-time telemetry: FPS, tracking confidence, camera
-status, recording status, and camera index.  Each metric is shown
-in a labelled section with an auto-hide capability for flashing
-messages.
+status, recording status, playback status, and camera index.
+Each metric is shown in a labelled section with an auto-hide
+capability for flashing messages.
 """
 
 from __future__ import annotations
@@ -17,12 +17,13 @@ import customtkinter as ctk
 class StatusBar(ctk.CTkFrame):
     """Application status bar showing live telemetry values.
 
-    Five labelled indicators are displayed horizontally:
+    Six labelled indicators are displayed horizontally:
       * FPS — current/average frames per second.
       * Confidence — pose tracking confidence (0–100 %).
       * Camera — camera device status.
       * Camera Index — active camera device index.
       * Recording — recording session state.
+      * Playback — playback session state.
 
     Additionally a *flash* method can be called to temporarily
     show a coloured message (e.g. error / warning).
@@ -77,6 +78,15 @@ class StatusBar(ctk.CTkFrame):
         )
         self._rec_label.grid(row=0, column=4, padx=8, pady=4, sticky=ctk.W)
 
+        # Playback status
+        self._pb_label = ctk.CTkLabel(
+            self,
+            text="Playback: Idle",
+            font=ctk.CTkFont(size=12),
+            anchor=ctk.W,
+        )
+        self._pb_label.grid(row=0, column=5, padx=8, pady=4, sticky=ctk.W)
+
         # Flash message (hidden by default)
         self._flash_label = ctk.CTkLabel(
             self,
@@ -85,9 +95,9 @@ class StatusBar(ctk.CTkFrame):
             anchor=ctk.E,
         )
         self._flash_label.grid(
-            row=0, column=5, padx=8, pady=4, sticky=ctk.E
+            row=0, column=6, padx=8, pady=4, sticky=ctk.E
         )
-        self.grid_columnconfigure(5, weight=1)
+        self.grid_columnconfigure(6, weight=1)
 
         self._flash_job: Optional[str] = None
 
@@ -146,6 +156,26 @@ class StatusBar(ctk.CTkFrame):
                 text="Recording: Idle",
                 text_color=("black", "white"),
             )
+
+    def set_playback_status(self, status: str) -> None:
+        """Update the playback status display.
+
+        Args:
+            status: One of ``"Idle"``, ``"Loaded"``, ``"Playing"``,
+                ``"Paused"``, ``"Stopped"``, ``"Finished"``.
+        """
+        colour_map = {
+            "Idle": ("black", "white"),
+            "Loaded": "#3498db",
+            "Playing": "#2ecc71",
+            "Paused": "#e67e22",
+            "Stopped": ("black", "white"),
+            "Finished": "#3498db",
+        }
+        colour = colour_map.get(status, ("black", "white"))
+        self._pb_label.configure(
+            text=f"Playback: {status}", text_color=colour
+        )
 
     def flash(self, message: str, level: str = "INFO") -> None:
         """Show a temporary status message.

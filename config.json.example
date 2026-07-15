@@ -1,0 +1,55 @@
+{
+  "camera": {
+    "device_id": 0,
+    "width": 640,
+    "height": 480,
+    "fps": 30.0,
+    "max_camera_index": 20,
+    "resolution_preset": "640x480",
+    "backend": "directshow"
+  },
+  "pose": {
+    "model_complexity": 1,
+    "min_detection_confidence": 0.5,
+    "min_tracking_confidence": 0.5,
+    "static_image_mode": false,
+    "delegate": "cpu"
+  },
+  "motion": {
+    "smoothing_window": 5,
+    "velocity_threshold": 0.1,
+    "interpolation_enabled": true,
+    "outlier_threshold": 0.15,
+    "exponential_alpha": 0.5,
+    "visibility_threshold": 0.5,
+    "use_outlier_removal": true,
+    "use_exponential_smoothing": true,
+    "use_moving_average": true,
+    "use_one_euro": false,
+    "use_savgol": false,
+    "one_euro_min_cutoff": 1.0,
+    "one_euro_beta": 0.007,
+    "one_euro_derivative_cutoff": 1.0,
+    "savgol_window_length": 5,
+    "savgol_polyorder": 2
+  },
+  "animation": {
+    "export_format": "bvh",
+    "scale_factor": 1.0,
+    "apply_smoothing": true
+  },
+  "blender": {
+    "blender_executable": "blender",
+    "script_path": "",
+    "auto_launch": false
+  },
+  "gui": {
+    "theme": "dark"
+  },
+  "logging": {
+    "level": "INFO",
+    "directory": "logs",
+    "max_file_size_mb": 10,
+    "backup_count": 5
+  }
+}

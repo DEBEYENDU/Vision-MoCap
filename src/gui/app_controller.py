@@ -21,16 +21,101 @@ from typing import Callable, Optional
 import numpy as np
 from numpy.typing import NDArray
 
+from src.animation.animation_clip import AnimationClip
+from src.animation.animation_engine import AnimationEngine
+from src.animation.avatar import Avatar
+from src.animation.bone import Bone
+from src.animation.bvh_exporter import BvhExporter
+from src.animation.csv_exporter import CsvExporter
+from src.animation.npy_exporter import NpyExporter
+from src.blender.exporter import BlenderExporter as BlenderExporterService
+from src.animation.retargeted_motion import RetargetedMotion
+from src.animation.retargeter import Retargeter
+from src.animation.skeleton_mapper import (
+    PRESET_MIXAMO,
+    SkeletonMapper,
+)
+from src.core.models import Vector3D
 from src.camera.device import CameraDevice
 from src.camera.manager import CameraManager
 from src.config.manager import AppConfig, ConfigManager
 from src.core.exceptions import CameraError, PoseEstimationError
+from src.motion.base import SequenceProcessor, deep_copy_sequence
+from src.motion.filters import (
+    ExponentialSmoothingFilter,
+    MovingAverageFilter,
+    OneEuroFilter,
+    OutlierRemovalFilter,
+    SavitzkyGolayFilter,
+)
 from src.motion.frame_manager import FrameManager
+from src.motion.motion_sequence import MotionSequence
 from src.motion.motion_recorder import MotionRecorder
+from src.playback.playback_controller import PlaybackController
+from src.playback.playback_renderer import PlaybackRenderer
 from src.pose.pose_detector import PoseDetector
 from src.pose.pose_result import PoseResult
 from src.pose.skeleton_renderer import SkeletonRenderer
 from src.recording.session_manager import SessionManager
+
+
+def _build_mixamo_avatar() -> Avatar:
+    """Build an Avatar matching the bones of the Mixamo skeleton preset."""
+    bones_data: list[dict] = [
+        # (name, parent, children, head, tail)
+        ("Hips",         None,  ["Spine", "LeftUpLeg", "RightUpLeg"],
+         Vector3D(0.0, 0.0, 0.0), Vector3D(0.0, 0.1, 0.0)),
+        ("Spine",        "Hips",  ["Spine1"],
+         Vector3D(0.0, 0.1, 0.0), Vector3D(0.0, 0.25, 0.0)),
+        ("Spine1",       "Spine", ["Spine2", "LeftShoulder", "RightShoulder"],
+         Vector3D(0.0, 0.25, 0.0), Vector3D(0.0, 0.4, 0.0)),
+        ("Spine2",       "Spine1",["Neck"],
+         Vector3D(0.0, 0.4, 0.0), Vector3D(0.0, 0.5, 0.0)),
+        ("Neck",         "Spine2",["Head"],
+         Vector3D(0.0, 0.5, 0.0), Vector3D(0.0, 0.55, 0.0)),
+        ("Head",         "Neck",  [],
+         Vector3D(0.0, 0.55, 0.0), Vector3D(0.0, 0.65, 0.0)),
+        ("LeftShoulder", "Spine1",["LeftUpperArm"],
+         Vector3D(0.05, 0.25, 0.0), Vector3D(0.08, 0.25, 0.0)),
+        ("LeftUpperArm", "LeftShoulder",["LeftForearm"],
+         Vector3D(0.08, 0.25, 0.0), Vector3D(0.15, 0.22, 0.0)),
+        ("LeftForearm",  "LeftUpperArm",["LeftHand"],
+         Vector3D(0.15, 0.22, 0.0), Vector3D(0.22, 0.18, 0.0)),
+        ("LeftHand",     "LeftForearm",[],
+         Vector3D(0.22, 0.18, 0.0), Vector3D(0.27, 0.16, 0.0)),
+        ("RightShoulder","Spine1",["RightUpperArm"],
+         Vector3D(-0.05, 0.25, 0.0), Vector3D(-0.08, 0.25, 0.0)),
+        ("RightUpperArm","RightShoulder",["RightForearm"],
+         Vector3D(-0.08, 0.25, 0.0), Vector3D(-0.15, 0.22, 0.0)),
+        ("RightForearm", "RightUpperArm",["RightHand"],
+         Vector3D(-0.15, 0.22, 0.0), Vector3D(-0.22, 0.18, 0.0)),
+        ("RightHand",    "RightForearm",[],
+         Vector3D(-0.22, 0.18, 0.0), Vector3D(-0.27, 0.16, 0.0)),
+        ("LeftUpLeg",    "Hips", ["LeftLeg"],
+         Vector3D(0.05, 0.0, 0.0), Vector3D(0.05, -0.3, 0.0)),
+        ("LeftLeg",      "LeftUpLeg",["LeftFoot"],
+         Vector3D(0.05, -0.3, 0.0), Vector3D(0.05, -0.6, 0.0)),
+        ("LeftFoot",     "LeftLeg",["LeftToeBase"],
+         Vector3D(0.05, -0.6, 0.0), Vector3D(0.05, -0.7, 0.05)),
+        ("LeftToeBase",  "LeftFoot",[],
+         Vector3D(0.05, -0.7, 0.05), Vector3D(0.05, -0.7, 0.15)),
+        ("RightUpLeg",   "Hips", ["RightLeg"],
+         Vector3D(-0.05, 0.0, 0.0), Vector3D(-0.05, -0.3, 0.0)),
+        ("RightLeg",     "RightUpLeg",["RightFoot"],
+         Vector3D(-0.05, -0.3, 0.0), Vector3D(-0.05, -0.6, 0.0)),
+        ("RightFoot",    "RightLeg",["RightToeBase"],
+         Vector3D(-0.05, -0.6, 0.0), Vector3D(-0.05, -0.7, 0.05)),
+        ("RightToeBase", "RightFoot",[],
+         Vector3D(-0.05, -0.7, 0.05), Vector3D(-0.05, -0.7, 0.15)),
+    ]
+    bones = [
+        Bone(
+            name=name, parent=parent, children=children,
+            head_position=head, tail_position=tail,
+        )
+        for name, parent, children, head, tail in bones_data
+    ]
+    return Avatar(name="MixamoRig", root_bone="Hips", bones=bones)
 
 
 class AppController:
@@ -57,9 +142,10 @@ class AppController:
 
         if config is not None:
             self._config = config
+            self._cfg_mgr: Optional[ConfigManager] = None
         else:
-            cfg_mgr = ConfigManager(config_path)
-            self._config = cfg_mgr.load()
+            self._cfg_mgr = ConfigManager(config_path)
+            self._config = self._cfg_mgr.load()
 
         # Pipeline components (created once, reused across sessions)
         self._camera_mgr = CameraManager(self._config.camera)
@@ -73,8 +159,18 @@ class AppController:
             draw_joint_ids=False,
             draw_confidence=False,
         )
-        self._recorder = MotionRecorder()
+        self._recorder = MotionRecorder(
+            subsample=self._config.motion.frame_subsample,
+        )
         self._session_mgr = SessionManager()
+
+        # Playback (GUI-thread only — no separate worker needed)
+        self._playback_ctrl = PlaybackController()
+        self._playback_renderer = PlaybackRenderer(self._renderer)
+
+        # Filter state
+        self._original_sequence: Optional[MotionSequence] = None
+        self._filters_enabled: bool = False
 
         # ---- Threading primitives ----
         self._frame_queue: queue.Queue[NDArray[np.uint8]] = queue.Queue(
@@ -442,6 +538,377 @@ class AppController:
     def recording_confidence(self) -> float:
         """Mean tracking confidence across recorded frames so far."""
         return self._session_mgr.average_confidence
+
+    # ------------------------------------------------------------------
+    # Playback API (all GUI-thread safe; no lock needed)
+    # ------------------------------------------------------------------
+
+    def load_recording(self, path: str) -> bool:
+        """Load a recorded JSON file for playback.
+
+        Args:
+            path: Filesystem path to a ``.json`` recording file.
+
+        Returns:
+            True on success, False on failure.
+        """
+        ok = self._playback_ctrl.load(path)
+        if ok:
+            seq = self._playback_ctrl.sequence
+            if seq is not None:
+                self._original_sequence = deep_copy_sequence(seq)
+                self._filters_enabled = False
+        return ok
+
+    def unload_recording(self) -> None:
+        """Unload the current playback recording."""
+        self._playback_ctrl.unload()
+
+    def play_playback(self) -> None:
+        """Start or restart playback from the current position."""
+        self._playback_ctrl.play()
+
+    def pause_playback(self) -> bool:
+        """Pause playback at the current frame.
+
+        Returns:
+            True if playback was paused, False if it was not PLAYING.
+        """
+        return self._playback_ctrl.pause()
+
+    def resume_playback(self) -> None:
+        """Resume playback from the paused position."""
+        self._playback_ctrl.play()
+
+    def stop_playback(self) -> None:
+        """Stop playback and reset to frame 0."""
+        self._playback_ctrl.stop()
+
+    def set_playback_paused(self) -> None:
+        """Ensure the player is in PAUSED state (for frame stepping)."""
+        self._playback_ctrl.set_paused()
+
+    def seek_playback(self, frame_index: int) -> bool:
+        """Jump to a specific frame index.
+
+        Args:
+            frame_index: Zero-based target frame index.
+
+        Returns:
+            True on success.
+        """
+        return self._playback_ctrl.seek(frame_index)
+
+    def seek_to_progress(self, progress: float) -> bool:
+        """Seek to a position by progress fraction.
+
+        Args:
+            progress: Fraction from 0.0 (start) to 1.0 (end).
+
+        Returns:
+            True on success.
+        """
+        return self._playback_ctrl.seek_to_progress(progress)
+
+    def step_playback_forward(self) -> None:
+        """Step forward one frame (pauses if playing)."""
+        self._playback_ctrl.next_frame()
+
+    def step_playback_backward(self) -> None:
+        """Step backward one frame (pauses if playing)."""
+        self._playback_ctrl.previous_frame()
+
+    def get_playback_frame(self) -> Optional[NDArray[np.uint8]]:
+        """Return a displayable BGR frame for the current playback position.
+
+        * PLAYING: advances time and returns the computed frame.
+        * PAUSED / FINISHED: returns the current frame without advancing.
+        * STOPPED or no sequence loaded: returns None.
+
+        Returns:
+            A BGR numpy array with the skeleton rendered, or None.
+        """
+        if self._playback_ctrl.sequence is None:
+            return None
+        if self._playback_ctrl.is_stopped:
+            return None
+
+        if self._playback_ctrl.is_playing:
+            self._playback_ctrl.advance()
+
+        pose = self._playback_ctrl.get_current_pose()
+        if pose is None:
+            return None
+        return self._playback_renderer.render_frame(pose)
+
+    @property
+    def playback_state(self) -> str:
+        """Human-readable playback state name."""
+        return self._playback_ctrl.state.name
+
+    @property
+    def is_playback_playing(self) -> bool:
+        return self._playback_ctrl.is_playing
+
+    @property
+    def is_playback_paused(self) -> bool:
+        return self._playback_ctrl.is_paused
+
+    @property
+    def is_playback_stopped(self) -> bool:
+        return self._playback_ctrl.is_stopped
+
+    @property
+    def is_playback_finished(self) -> bool:
+        return self._playback_ctrl.is_finished
+
+    @property
+    def playback_current_frame(self) -> int:
+        return self._playback_ctrl.current_frame_index
+
+    @property
+    def playback_total_frames(self) -> int:
+        return self._playback_ctrl.total_frames
+
+    @property
+    def playback_duration(self) -> float:
+        return self._playback_ctrl.duration
+
+    @property
+    def playback_source_path(self) -> Optional[Path]:
+        return self._playback_ctrl.source_path
+
+    @property
+    def has_playback_sequence(self) -> bool:
+        return self._playback_ctrl.sequence is not None
+
+    @property
+    def playback_progress(self) -> float:
+        return self._playback_ctrl.playback_progress
+
+    @property
+    def current_time_seconds(self) -> float:
+        return self._playback_ctrl.current_time_seconds
+
+    # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def export_bvh(self, output_path: Path) -> bool:
+        """Export the current playback sequence as a BVH animation file.
+
+        The sequence is retargeted using a built-in Mixamo skeleton preset
+        and written to *output_path*.
+
+        Args:
+            output_path: Destination path for the ``.bvh`` file.
+
+        Returns:
+            True on success, False if no sequence is loaded or retargeting
+            fails.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None:
+            self._emit("WARNING", "No playback sequence to export.")
+            return False
+
+        try:
+            mapper = SkeletonMapper(preset="mixamo")
+            avatar = _build_mixamo_avatar()
+            retargeter = Retargeter(mapper=mapper, avatar=avatar)
+            retargeted: RetargetedMotion = retargeter.retarget(seq)
+            engine = AnimationEngine()
+            clip: AnimationClip = engine.convert(
+                retargeted, interpolation=InterpolationType.LINEAR,
+            )
+            exporter = BvhExporter(avatar, clip)
+            exporter.export(output_path)
+            self._emit("INFO", f"BVH exported to {output_path.name}")
+            return True
+        except Exception as exc:
+            self._logger.exception("BVH export failed")
+            self._emit("ERROR", f"BVH export failed: {exc}")
+            return False
+
+    def export_csv(self, output_path: Path) -> bool:
+        """Export the current playback sequence as CSV.
+
+        Args:
+            output_path: Destination path for the ``.csv`` file.
+
+        Returns:
+            True on success.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None:
+            self._emit("WARNING", "No playback sequence to export.")
+            return False
+        try:
+            CsvExporter().export(seq, output_path)
+            self._emit("INFO", f"CSV exported to {output_path.name}")
+            return True
+        except Exception as exc:
+            self._logger.exception("CSV export failed")
+            self._emit("ERROR", f"CSV export failed: {exc}")
+            return False
+
+    def export_npy(self, output_path: Path) -> bool:
+        """Export the current playback sequence as NumPy binary.
+
+        Args:
+            output_path: Destination path for the ``.npy`` file.
+
+        Returns:
+            True on success.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None:
+            self._emit("WARNING", "No playback sequence to export.")
+            return False
+        try:
+            NpyExporter().export(seq, output_path)
+            self._emit("INFO", f"NPY exported to {output_path.name}")
+            return True
+        except Exception as exc:
+            self._logger.exception("NPY export failed")
+            self._emit("ERROR", f"NPY export failed: {exc}")
+            return False
+
+    def send_to_blender(self) -> bool:
+        """Export the current playback sequence to Blender.
+
+        Retargets the loaded sequence, exports as BVH, and launches
+        Blender with the add-on pre-loaded (if ``auto_launch`` is
+        enabled in config).
+
+        Returns:
+            True on success.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None:
+            self._emit("WARNING", "No playback sequence to export.")
+            return False
+        try:
+            mapper = SkeletonMapper(preset="mixamo")
+            avatar = _build_mixamo_avatar()
+            retargeter = Retargeter(mapper=mapper, avatar=avatar)
+            retargeted = retargeter.retarget(seq)
+            engine = AnimationEngine()
+            clip = engine.convert(retargeted)
+            blender_cfg = self._config.blender
+            exporter = BlenderExporterService(blender_cfg)
+            exporter.send_to_blender(clip, avatar)
+            self._emit("INFO", "Exported to Blender.")
+            return True
+        except Exception as exc:
+            self._logger.exception("Blender export failed")
+            self._emit("ERROR", f"Blender export failed: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
+    # Filter API
+    # ------------------------------------------------------------------
+
+    def apply_filters(self) -> None:
+        """Run the filter pipeline on the loaded sequence.
+
+        Builds a pipeline from all enabled filters (in order) and
+        applies them to the current playback sequence.  The original
+        sequence is preserved for reset.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None or self._original_sequence is None:
+            return
+
+        pipeline = self._build_filter_pipeline()
+        if not pipeline:
+            return
+
+        # Always reset to original before applying
+        working = deep_copy_sequence(self._original_sequence)
+        for processor in pipeline:
+            working = processor.process(working)
+
+        self._playback_ctrl.replace_sequence(working)
+        self._filters_enabled = True
+        self._emit("INFO", f"Applied {len(pipeline)} filter(s).")
+
+    def reset_filters(self) -> None:
+        """Restore the original unfiltered sequence."""
+        if self._original_sequence is None:
+            return
+        seq = self._original_sequence
+        self._playback_ctrl.replace_sequence(deep_copy_sequence(seq))
+        self._filters_enabled = False
+        self._emit("INFO", "Filters reset.")
+
+    @property
+    def has_filters(self) -> bool:
+        return self._filters_enabled
+
+    @property
+    def has_original_sequence(self) -> bool:
+        return self._original_sequence is not None
+
+    def _build_filter_pipeline(self) -> list[SequenceProcessor]:
+        """Construct the filter pipeline from config.
+
+        Filters are applied in the following order:
+          1. OutlierRemovalFilter
+          2. ExponentialSmoothingFilter
+          3. MovingAverageFilter
+          4. OneEuroFilter
+          5. SavitzkyGolayFilter
+        """
+        cfg = self._config.motion
+        pipeline: list[SequenceProcessor] = []
+
+        if cfg.use_outlier_removal:
+            pipeline.append(OutlierRemovalFilter(self._config.motion))
+
+        if cfg.use_exponential_smoothing:
+            pipeline.append(ExponentialSmoothingFilter(self._config.motion))
+
+        if cfg.use_moving_average:
+            pipeline.append(MovingAverageFilter(self._config.motion))
+
+        if cfg.use_one_euro:
+            pipeline.append(OneEuroFilter(
+                min_cutoff=cfg.one_euro_min_cutoff,
+                beta=cfg.one_euro_beta,
+                derivative_cutoff=cfg.one_euro_derivative_cutoff,
+            ))
+
+        if cfg.use_savgol:
+            pipeline.append(SavitzkyGolayFilter(
+                window_length=cfg.savgol_window_length,
+                polyorder=cfg.savgol_polyorder,
+            ))
+
+        return pipeline
+
+    # ------------------------------------------------------------------
+    # Theme API
+    # ------------------------------------------------------------------
+
+    @property
+    def theme(self) -> str:
+        """Current GUI theme ("dark" or "light")."""
+        return self._config.gui.theme
+
+    def set_theme(self, theme: str) -> None:
+        """Set the GUI theme and persist to config.
+
+        Args:
+            theme: "dark" or "light".
+        """
+        if theme not in ("dark", "light"):
+            self._logger.warning("Invalid theme '%s', ignoring.", theme)
+            return
+        self._config.gui.theme = theme
+        if self._cfg_mgr is not None:
+            self._cfg_mgr.save()
+        self._emit("INFO", f"Theme set to {theme}.")
 
     # ------------------------------------------------------------------
     # Cleanup

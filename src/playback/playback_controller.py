@@ -88,6 +88,25 @@ class PlaybackController:
         self._source_path = None
         self._logger.info("Playback unloaded.")
 
+    def replace_sequence(self, sequence: MotionSequence) -> None:
+        """Replace the loaded sequence in-place (for filtered processing).
+
+        The source path and playback position are preserved so the user
+        can continue working with the filtered data.
+
+        Args:
+            sequence: The new MotionSequence to use.
+        """
+        pos = self._player.current_frame_index
+        self._player.load(sequence)
+        self._player._current_frame = min(pos, self.total_frames - 1)
+        self._logger.info(
+            "Sequence replaced: %d frames, %.2f s, %.1f FPS.",
+            sequence.total_frames,
+            sequence.duration,
+            sequence.average_fps,
+        )
+
     # ------------------------------------------------------------------
     # Transport controls
     # ------------------------------------------------------------------
@@ -111,6 +130,19 @@ class PlaybackController:
         """Stop playback and reset to frame 0."""
         self._player.stop()
 
+    def set_paused(self) -> None:
+        """Transition the player to PAUSED state from any non-playing state.
+
+        If the player is already PAUSED this is a no-op.  If the player
+        is PLAYING it is paused first.  The current frame index is
+        preserved.
+        """
+        if self._player.is_playing:
+            self._player.pause()
+        elif self._player.is_stopped and self._player.sequence is not None:
+            self._player.play()
+            self._player.pause()
+
     def seek(self, frame: int) -> bool:
         """Jump to the specified frame index (0-based).
 
@@ -125,6 +157,26 @@ class PlaybackController:
             range or no sequence is loaded.
         """
         return self._player.seek(frame)
+
+    def seek_to_progress(self, progress: float) -> bool:
+        """Seek to a position specified as a progress fraction.
+
+        This is a convenience method for timeline scrubbing.  The
+        playback state (PLAYING/PAUSED/STOPPED) is preserved; only
+        the frame position changes.
+
+        Args:
+            progress: Fraction from 0.0 (start) to 1.0 (end).
+
+        Returns:
+            True if the seek succeeded, False on error.
+        """
+        if self._player.sequence is None:
+            return False
+        # Clamp progress to valid range
+        progress = max(0.0, min(1.0, progress))
+        target_frame = int(progress * (self._player.total_frames - 1))
+        return self.seek(target_frame)
 
     def next_frame(self) -> Optional[PoseResult]:
         """Step forward one frame.
@@ -242,3 +294,42 @@ class PlaybackController:
     @property
     def player(self) -> PlaybackPlayer:
         return self._player
+
+    # ------------------------------------------------------------------
+    # Timeline properties
+    # ------------------------------------------------------------------
+
+    @property
+    def playback_progress(self) -> float:
+        """Return playback progress as a fraction (0.0 to 1.0).
+
+        Returns:
+            Progress ratio, or 0.0 if no sequence is loaded.
+        """
+        if self._player.sequence is None or self._player.total_frames <= 1:
+            return 0.0
+        return self._player.current_frame_index / (self._player.total_frames - 1)
+
+    @property
+    def current_time_seconds(self) -> float:
+        """Return the current playback time based on frame position.
+
+        Computed as ``current_frame_index / average_fps`` regardless
+        of playback state.  This is deterministic and always matches
+        the displayed frame.
+
+        Returns:
+            Current time in seconds, or 0.0 if no sequence is loaded.
+        """
+        if self._player.sequence is None or self._player.average_fps <= 0:
+            return 0.0
+        return self._player.current_frame_index / self._player.average_fps
+
+    @property
+    def duration_seconds(self) -> float:
+        """Return the total duration of the loaded sequence in seconds.
+
+        Returns:
+            Duration in seconds, or 0.0 if no sequence is loaded.
+        """
+        return self._player.duration
