@@ -9,12 +9,7 @@ from src.camera.backend import Backend
 
 @dataclass
 class CameraDevice:
-    """Represents a physical or virtual camera detected on the system.
-
-    Stores metadata gathered during camera discovery or after opening
-    a camera. Designed to support real camera names from platform APIs
-    without changing the data shape — populate *name* with a descriptive
-    string when available, otherwise fall back to ``"Camera {index}"``.
+    """Represents a camera detected on the system.
 
     Attributes:
         index: Zero-based device index used to open the camera via OpenCV.

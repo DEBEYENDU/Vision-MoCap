@@ -40,9 +40,14 @@ _COLOR_LANDMARK = (0, 255, 0)
 _COLOR_TEXT = (255, 255, 255)
 
 # Maps each connection to a colour based on its body region.
+# Torso connections (both landmarks in torso set) are checked FIRST
+# so they are not overridden by left/right arm/leg checks.
+_TORSO_SET = {11, 12, 23, 24}
 _CONNECTION_COLORS: List[Tuple[int, int, int]] = []
 for a, b in POSE_CONNECTIONS:
-    if a in {11, 13, 15, 17, 19, 21} or b in {11, 13, 15, 17, 19, 21}:
+    if a in _TORSO_SET and b in _TORSO_SET:
+        _CONNECTION_COLORS.append(_COLOR_TORSO)
+    elif a in {11, 13, 15, 17, 19, 21} or b in {11, 13, 15, 17, 19, 21}:
         _CONNECTION_COLORS.append(_COLOR_LEFT)
     elif a in {12, 14, 16, 18, 20, 22} or b in {12, 14, 16, 18, 20, 22}:
         _CONNECTION_COLORS.append(_COLOR_RIGHT)
@@ -50,8 +55,6 @@ for a, b in POSE_CONNECTIONS:
         _CONNECTION_COLORS.append(_COLOR_LEFT)
     elif a in {24, 26, 28, 30, 32} or b in {24, 26, 28, 30, 32}:
         _CONNECTION_COLORS.append(_COLOR_RIGHT)
-    elif a in {11, 12, 23, 24} or b in {11, 12, 23, 24}:
-        _CONNECTION_COLORS.append(_COLOR_TORSO)
     else:
         _CONNECTION_COLORS.append(_COLOR_FACE)
 

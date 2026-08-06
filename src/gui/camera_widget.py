@@ -14,22 +14,11 @@ import cv2
 import customtkinter as ctk
 import numpy as np
 from numpy.typing import NDArray
-from PIL import Image
+from PIL import Image, ImageTk
+import tkinter as tk
 
 
 class CameraWidget(ctk.CTkFrame):
-    """CustomTkinter frame that displays the live camera preview.
-
-    The widget accepts pre-rendered BGR frames (with skeleton overlay
-    already drawn by SkeletonRenderer) and shows them at a size that
-    fits the available space while preserving aspect ratio.
-
-    A placeholder label is shown when no camera feed is active.
-
-    Attributes:
-        placeholder_text: Message shown when the camera is not running.
-    """
-
     def __init__(
         self,
         master: ctk.BaseWidget,
@@ -39,44 +28,32 @@ class CameraWidget(ctk.CTkFrame):
         super().__init__(master, **kwargs)
         self._logger = logging.getLogger(self.__class__.__name__)
 
-        # Configure grid so the image label fills the available space.
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
         self._placeholder = placeholder_text
 
-        # Label that holds the CTkImage or placeholder text.
-        self._image_label = ctk.CTkLabel(
+        # Use a plain tk.Label to avoid CTkLabel's PhotoImage lifecycle issues.
+        # The PhotoImage is created once and reused via paste().
+        self._image_label = tk.Label(
             self,
             text=placeholder_text,
-            font=ctk.CTkFont(size=24),
-            anchor=ctk.CENTER,
+            font=("TkDefaultFont", 24),
+            anchor=tk.CENTER,
+            bg="#2b2b2b",
+            fg="white",
         )
         self._image_label.grid(row=0, column=0, sticky="nsew")
 
-        self._ctk_image: Optional[ctk.CTkImage] = None
+        self._photo: Optional[ImageTk.PhotoImage] = None
         self._display_size: tuple[int, int] = (640, 480)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
+        self._display_width: int = 640
 
     def update_frame(self, frame: Optional[NDArray[np.uint8]]) -> None:
-        """Display a new camera frame.
-
-        Args:
-            frame: BGR numpy array (annotated by SkeletonRenderer)
-                or None to show the placeholder.
-        """
         if frame is None:
-            self._image_label.configure(
-                text=self._placeholder, image=None
-            )
+            self.clear()
             return
 
-        self._image_label.configure(text="")
-
-        # Determine the widget's current display area.
         self.update_idletasks()
         current_width = self._image_label.winfo_width()
         current_height = self._image_label.winfo_height()
@@ -89,7 +66,6 @@ class CameraWidget(ctk.CTkFrame):
                 self._display_width * 0.75)
             current_width, current_height = max_w, max_h
 
-        # Resize the frame to fit while preserving aspect ratio.
         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         pil_image = Image.fromarray(frame_rgb)
 
@@ -103,14 +79,21 @@ class CameraWidget(ctk.CTkFrame):
 
         pil_image = pil_image.resize((new_w, new_h), Image.BILINEAR)
 
-        self._ctk_image = ctk.CTkImage(
-            light_image=pil_image,
-            dark_image=pil_image,
-            size=(new_w, new_h),
-        )
-        self._image_label.configure(image=self._ctk_image)
+        if self._photo is None or (new_w, new_h) != self._photo_size():
+            # Create a new PhotoImage when size changes
+            self._photo = ImageTk.PhotoImage(pil_image)
+            self._image_label.configure(image=self._photo, text="")
+        else:
+            # Reuse the existing PhotoImage — no GC risk
+            self._photo.paste(pil_image)
+
+    def _photo_size(self) -> tuple[int, int]:
+        if self._photo is None:
+            return (0, 0)
+        return (self._photo.width(), self._photo.height())
 
     def clear(self) -> None:
-        """Reset to the placeholder state."""
-        self._image_label.configure(text=self._placeholder, image=None)
-        self._ctk_image = None
+        self._image_label.configure(text=self._placeholder)
+        if self._photo is not None:
+            self._image_label.configure(image="")
+            self._photo = None

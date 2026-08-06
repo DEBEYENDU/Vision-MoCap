@@ -499,7 +499,6 @@ class MainWindow(GUIAppBase):
         initial_theme = self._controller.theme
         ctk.set_appearance_mode(initial_theme)
         ctk.set_default_color_theme("dark-blue")
-        self._toolbar.set_theme(initial_theme)
 
         self._window = ctk.CTk()
         self._window.title(self._title)
@@ -551,6 +550,7 @@ class MainWindow(GUIAppBase):
             on_exit=self._on_exit,
         )
         self._toolbar.grid(row=2, column=0, padx=8, pady=(2, 4), sticky="ew")
+        self._toolbar.set_theme(initial_theme)
 
         # ---- Timeline ----
         self._timeline = TimelineWidget(
@@ -608,33 +608,45 @@ class MainWindow(GUIAppBase):
     # ------------------------------------------------------------------
 
     def _on_start_camera(self) -> None:
-        """Discover cameras and open the first available one."""
+        """Discover cameras and automatically open the first working one.
+
+        ``discover_cameras()`` keeps the first working camera open.
+        If no camera works, an error dialog is shown.
+        """
         devices = self._controller.discover_cameras()
         if not devices:
             messagebox.showerror(
                 "Camera Error",
-                "No cameras found.  Please connect a camera and try again.",
+                "No working camera detected.\n"
+                "Please connect a webcam and restart VisionMoCap.",
             )
             self._logger.error("No cameras found.")
             return
 
-        index = devices[0].index
-        ok = self._controller.start_camera(index)
-        if not ok:
-            self._status_bar.flash("Failed to start camera.", "ERROR")
-            return
+        self._toolbar.set_camera_list(devices)
 
         device = self._controller.get_current_camera()
-        name = device.name if device else f"Camera {index}"
-        self._toolbar.set_camera_started()
-        self._status_bar.set_camera_status(name)
-        self._status_bar.set_camera_index(index)
-
-        if device:
-            self._info_panel.set_device(device.name)
-            self._info_panel.set_resolution(
-                device.resolution_width, device.resolution_height
+        if device is None:
+            messagebox.showerror(
+                "Camera Error",
+                "No working camera detected.\n"
+                "Please connect a webcam and restart VisionMoCap.",
             )
+            self._logger.error("No working camera found.")
+            return
+
+        ok = self._controller.start_current_camera()
+        if not ok:
+            self._status_bar.flash("Failed to start camera pipeline.", "ERROR")
+            return
+
+        self._toolbar.set_camera_started()
+        self._status_bar.set_camera_status(device.name)
+        self._status_bar.set_camera_index(device.index)
+        self._info_panel.set_device(device.name)
+        self._info_panel.set_resolution(
+            device.resolution_width, device.resolution_height
+        )
         self._camera_widget.clear()
         self._last_status_update = time.monotonic()
 

@@ -24,9 +24,9 @@ class CameraConfig:
     width: int = 640
     height: int = 480
     fps: float = 30.0
-    max_camera_index: int = 20
+    max_camera_index: int = 5
     resolution_preset: str = "640x480"
-    backend: str = "directshow"
+    backend: str = "msmf"
 
 
 @dataclass
@@ -37,19 +37,16 @@ class PoseConfig:
         model_complexity: 0=lite, 1=full, 2=heavy.
         min_detection_confidence: Minimum confidence for pose detection.
         min_tracking_confidence: Minimum confidence for tracking between frames.
-        static_image_mode: Kept for backward compatibility (unused by Tasks API).
         model_path: Path to the PoseLandmarker ``.task`` model file. When
             ``None`` the model is auto-resolved from *model_complexity* and
             downloaded to ``models/`` if not present.
-        delegate: Compute delegate for inference — ``"cpu"``, ``"gpu"``,
-            or ``"xnnpack"``.
+        delegate: Compute delegate for inference — ``"cpu"`` or ``"gpu"``.
     """
 
     model_complexity: int = 1
     min_detection_confidence: float = 0.5
     min_tracking_confidence: float = 0.5
     delegate: str = "cpu"
-    static_image_mode: bool = False
     model_path: Optional[str] = None
 
 

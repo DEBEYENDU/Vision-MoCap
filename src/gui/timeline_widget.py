@@ -75,7 +75,7 @@ class TimelineWidget(ctk.CTkFrame):
             self,
             from_=0.0,
             to=1.0,
-            number_of_steps=0,  # continuous
+            number_of_steps=1000,
             command=self._on_slider_change,
         )
         self._slider.grid(row=1, column=0, columnspan=3, padx=8, pady=(2, 4), sticky="ew")

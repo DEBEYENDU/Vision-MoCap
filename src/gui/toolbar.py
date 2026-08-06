@@ -8,9 +8,12 @@ based on the current application state.
 from __future__ import annotations
 
 import logging
-from typing import Callable, Optional
+from typing import Callable, Optional, TYPE_CHECKING
 
 import customtkinter as ctk
+
+if TYPE_CHECKING:
+    from src.camera.device import CameraDevice
 
 
 class Toolbar(ctk.CTkFrame):
@@ -59,10 +62,21 @@ class Toolbar(ctk.CTkFrame):
     ) -> None:
         super().__init__(master, **kwargs)
         self._logger = logging.getLogger(self.__class__.__name__)
+        self._camera_index_map: dict[str, int] = {}
 
         self.grid_columnconfigure(0, weight=0)
 
         col = 0
+
+        # --- Camera selector dropdown ---
+        self._camera_menu = ctk.CTkOptionMenu(
+            self,
+            values=["No cameras"],
+            state=ctk.DISABLED,
+        )
+        self._camera_menu.grid(row=0, column=col, padx=(4, 2), pady=4)
+        col += 1
+
         self._start_btn = ctk.CTkButton(
             self,
             text="Start Camera",
@@ -215,6 +229,41 @@ class Toolbar(ctk.CTkFrame):
 
         # Spacer to push buttons left.
         self.grid_columnconfigure(col, weight=1)
+
+    # ------------------------------------------------------------------
+    # Camera selector
+    # ------------------------------------------------------------------
+
+    def set_camera_list(self, devices: list[CameraDevice]) -> None:
+        """Populate the camera selector dropdown with discovered devices.
+
+        Format: ``"Camera N (Working)"`` or ``"Camera N (Unavailable)"``.
+        """
+        self._camera_index_map.clear()
+        if not devices:
+            self._camera_menu.configure(
+                values=["No cameras"],
+                state=ctk.DISABLED,
+            )
+            return
+
+        labels: list[str] = []
+        for d in devices:
+            status = "Working" if d.is_available else "Unavailable"
+            label = f"Camera {d.index} ({status})"
+            labels.append(label)
+            self._camera_index_map[label] = d.index
+
+        self._camera_menu.configure(
+            values=labels,
+            state=ctk.NORMAL,
+        )
+        self._camera_menu.set(labels[0])
+
+    def get_selected_camera(self) -> int:
+        """Return the index of the currently selected camera, or 0."""
+        label = self._camera_menu.get()
+        return self._camera_index_map.get(label, 0)
 
     # ------------------------------------------------------------------
     # State helpers

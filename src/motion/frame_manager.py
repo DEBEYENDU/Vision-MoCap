@@ -40,6 +40,7 @@ class FrameManager:
         resize: Optional[Tuple[int, int]] = None,
         color_conversion: Optional[int] = None,
         buffer_size: int = 1,
+        enhance_contrast: bool = False,
     ) -> None:
         """
         Args:
@@ -48,10 +49,13 @@ class FrameManager:
                 ``cv2.COLOR_BGR2RGB``, or None to keep BGR.
             buffer_size: Maximum number of frames to keep in the circular
                 buffer. 1 preserves only the latest frame.
+            enhance_contrast: Apply CLAHE on the luminance channel.
         """
         self._resize = resize
         self._color_conversion = color_conversion
         self._buffer: Deque[NDArray[np.uint8]] = deque(maxlen=max(buffer_size, 1))
+        self._enhance_contrast = enhance_contrast
+        self._clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8)) if enhance_contrast else None
 
         self._frame_number: int = 0
         self._frame_width: int = 0
@@ -92,6 +96,13 @@ class FrameManager:
 
         if self._color_conversion is not None:
             result = cv2.cvtColor(result, self._color_conversion)
+
+        if self._enhance_contrast:
+            lab = cv2.cvtColor(result, cv2.COLOR_BGR2LAB)
+            l, a, b = cv2.split(lab)
+            l = self._clahe.apply(l)
+            lab = cv2.merge([l, a, b])
+            result = cv2.cvtColor(lab, cv2.COLOR_LAB2BGR)
 
         self._buffer.append(result)
         return result

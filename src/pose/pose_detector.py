@@ -120,62 +120,89 @@ class PoseDetector(PoseEstimatorBase):
             PoseEstimationError: If model resolution, download, or
                 landmarker creation fails.
         """
+        super().initialize()
+
+        model_path = None
+
         try:
             model_path = _resolve_model_path(self._config)
 
             if not model_path.exists():
                 complexity = self._config.model_complexity
                 url = _MODEL_URLS.get(complexity)
+
                 if url is None:
                     raise PoseEstimationError(
                         f"Unknown model_complexity {complexity}. "
                         f"Use 0 (lite), 1 (full), or 2 (heavy)."
                     )
+
                 _download_model(url, model_path)
 
-            self._logger.info(
-                "Loading pose model: %s (complexity=%d).",
-                model_path.resolve(),
-                self._config.model_complexity,
-            )
+            if not model_path.exists():
+                raise PoseEstimationError(
+                    f"Pose model file does not exist:\n{model_path}"
+                )
+
+            delegate_name = self._config.delegate.lower()
 
             delegate_map = {
                 "cpu": mp.tasks.BaseOptions.Delegate.CPU,
                 "gpu": mp.tasks.BaseOptions.Delegate.GPU,
-                "xnnpack": mp.tasks.BaseOptions.Delegate.XNNPACK,
             }
-            delegate = delegate_map.get(
-                self._config.delegate.lower(),
-                mp.tasks.BaseOptions.Delegate.CPU,
-            )
+
+            if delegate_name not in delegate_map:
+                self._logger.warning(
+                    "Unknown delegate '%s'. Falling back to CPU.",
+                    delegate_name,
+                )
+                delegate_name = "cpu"
+
+            delegate = delegate_map[delegate_name]
+
             base_options = mp.tasks.BaseOptions(
                 model_asset_path=str(model_path.resolve()),
                 delegate=delegate,
             )
+
             options = mp.tasks.vision.PoseLandmarkerOptions(
                 base_options=base_options,
                 running_mode=mp.tasks.vision.RunningMode.IMAGE,
-                min_pose_detection_confidence=self._config.min_detection_confidence,
-                min_pose_presence_confidence=self._config.min_detection_confidence,
-                min_tracking_confidence=self._config.min_tracking_confidence,
+                min_pose_detection_confidence=(
+                    self._config.min_detection_confidence
+                ),
+                min_pose_presence_confidence=(
+                    self._config.min_detection_confidence
+                ),
+                min_tracking_confidence=(
+                    self._config.min_tracking_confidence
+                ),
                 num_poses=1,
                 output_segmentation_masks=False,
             )
-            self._landmarker = mp.tasks.vision.PoseLandmarker.create_from_options(
-                options
+
+            self._landmarker = (
+                mp.tasks.vision.PoseLandmarker.create_from_options(
+                    options
+                )
             )
-            self._logger.info(
-                "PoseDetector initialized (model_complexity=%d, "
-                "min_detection_confidence=%.2f).",
-                self._config.model_complexity,
-                self._config.min_detection_confidence,
-            )
+
         except PoseEstimationError:
             raise
+
         except Exception as e:
-            raise PoseEstimationError(
-                "Failed to initialise MediaPipe Pose Landmarker.", cause=e
+            self._logger.exception(
+                "MediaPipe Pose Landmarker initialization failed."
             )
+            raise PoseEstimationError(
+                (
+                    "Failed to initialise MediaPipe Pose Landmarker.\n\n"
+                    f"Model Path : {model_path}\n"
+                    f"Delegate   : {self._config.delegate}\n"
+                    f"Error      : {e}"
+                ),
+                cause=e,
+            ) from e
 
     def estimate(self, frame: NDArray[np.uint8]) -> PoseResult:
         """Run pose estimation on a single BGR frame (ABC interface).
@@ -218,10 +245,9 @@ class PoseDetector(PoseEstimatorBase):
                 pose_detected=False,
             )
 
-        # Use the first detected pose.
         landmarks = self._extract_landmarks(result.pose_landmarks[0])
         world_landmarks = (
-            self._extract_landmarks(result.pose_world_landmarks[0])
+            self._extract_world_landmarks(result.pose_world_landmarks[0])
             if result.pose_world_landmarks
             else []
         )
@@ -261,15 +287,10 @@ class PoseDetector(PoseEstimatorBase):
     def _extract_landmarks(
         landmark_list: object,
     ) -> List[Landmark]:
-        """Convert a MediaPipe Tasks landmark list to List[Landmark].
+        """Convert a ``NormalizedLandmarkList`` to ``List[Landmark]``.
 
-        Args:
-            landmark_list: A ``NormalizedLandmarkList`` or ``LandmarkList``
-                from the Tasks API (iterable with ``.x``, ``.y``, ``.z``,
-                ``.visibility`` attributes per element).
-
-        Returns:
-            A list of :class:`Landmark` dataclass instances.
+        ``NormalizedLandmark`` objects have ``.x``, ``.y``, ``.z``,
+        and ``.visibility`` attributes.
         """
         result: List[Landmark] = []
         for lm in landmark_list:
@@ -279,6 +300,28 @@ class PoseDetector(PoseEstimatorBase):
                     y=float(lm.y),
                     z=float(lm.z),
                     visibility=float(lm.visibility),
+                )
+            )
+        return result
+
+    @staticmethod
+    def _extract_world_landmarks(
+        landmark_list: object,
+    ) -> List[Landmark]:
+        """Convert a ``LandmarkList`` (world landmarks) to ``List[Landmark]``.
+
+        World ``Landmark`` objects in the MediaPipe Tasks API only have
+        ``.x``, ``.y``, ``.z`` — **no** ``.visibility`` attribute.
+        We set visibility to 1.0 for world landmarks.
+        """
+        result: List[Landmark] = []
+        for lm in landmark_list:
+            result.append(
+                Landmark(
+                    x=float(lm.x),
+                    y=float(lm.y),
+                    z=float(lm.z),
+                    visibility=1.0,
                 )
             )
         return result

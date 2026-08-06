@@ -27,6 +27,7 @@ from src.animation.avatar import Avatar
 from src.animation.bone import Bone
 from src.animation.bvh_exporter import BvhExporter
 from src.animation.csv_exporter import CsvExporter
+from src.animation.keyframe import InterpolationType
 from src.animation.npy_exporter import NpyExporter
 from src.blender.exporter import BlenderExporter as BlenderExporterService
 from src.animation.retargeted_motion import RetargetedMotion
@@ -151,6 +152,7 @@ class AppController:
         self._camera_mgr = CameraManager(self._config.camera)
         self._frame_mgr = FrameManager(
             resize=None, color_conversion=None, buffer_size=1,
+            enhance_contrast=True,
         )
         self._pose_detector = PoseDetector(self._config.pose)
         self._renderer = SkeletonRenderer(
@@ -216,12 +218,47 @@ class AppController:
         """Probe all available camera indices and return detected devices."""
         return self._camera_mgr.discover_cameras()
 
+    def start_current_camera(self) -> bool:
+        """Initialise the pipeline for the already-open camera.
+
+        Called after ``discover_cameras()`` (which opens the first
+        working camera).  Sets up the pose detector and starts the
+        capture worker thread without reopening the camera.
+        """
+        try:
+            self._pose_detector.initialize()
+        except PoseEstimationError as e:
+            self._emit("ERROR", f"Pose detector init failed: {e}")
+            self._camera_mgr.close_camera()
+            return False
+
+        self._camera_open = True
+        device = self._camera_mgr.get_current_camera()
+        self._status_cam_index = device.index if device else 0
+        self._status_cam_name = device.name if device else "Camera 0"
+
+        self._stop_event.clear()
+        self._worker = threading.Thread(
+            target=self._capture_loop, daemon=True
+        )
+        self._worker.start()
+
+        self._emit(
+            "INFO",
+            f"Camera started: {self._status_cam_name} "
+            f"(index {self._status_cam_index}).",
+        )
+        return True
+
     def start_camera(self, index: int) -> bool:
         """Open a camera, initialise the pose detector, start the worker.
 
         The camera and detector are set up synchronously so the caller
         immediately knows whether startup succeeded.  The frame-capture
         pipeline runs in a background daemon thread thereafter.
+
+        If the camera opens but the pose detector fails to initialise,
+        the camera is safely closed before returning.
 
         Args:
             index: Zero-based device index.
@@ -234,9 +271,15 @@ class AppController:
             if not ok:
                 self._emit("ERROR", f"Failed to open camera {index}.")
                 return False
-            self._pose_detector.initialize()
-        except (CameraError, PoseEstimationError) as e:
+        except CameraError as e:
             self._emit("ERROR", str(e))
+            return False
+
+        try:
+            self._pose_detector.initialize()
+        except PoseEstimationError as e:
+            self._emit("ERROR", f"Pose detector init failed: {e}")
+            self._camera_mgr.close_camera()
             return False
 
         self._camera_open = True
@@ -311,25 +354,61 @@ class AppController:
         """Background thread: capture → detect → render → enqueue."""
         self._logger.info("Capture thread started.")
         log_counter = 0
+        consecutive_errors = 0
+        max_consecutive_errors = 5
+        warmup_frames = 3  # discard first frames (camera warm-up)
 
         while not self._stop_event.is_set():
             try:
                 raw = self._camera_mgr.get_frame()
+                consecutive_errors = 0
             except CameraError:
                 if self._stop_event.is_set():
                     break
-                self._emit("ERROR", "Camera disconnected during capture.")
-                self._error_queue.put(
-                    ("Camera Error",
-                     "The camera was disconnected or became unavailable.")
+                consecutive_errors += 1
+                if consecutive_errors >= max_consecutive_errors:
+                    self._emit(
+                        "ERROR",
+                        f"Camera read failed {consecutive_errors} times consecutively. "
+                        "The camera may have been disconnected.",
+                    )
+                    self._error_queue.put(
+                        ("Camera Error",
+                         "The camera was disconnected or became unavailable.")
+                    )
+                    break
+                self._logger.warning(
+                    "Camera read error (%d/%d), retrying...",
+                    consecutive_errors, max_consecutive_errors,
                 )
-                break
+                self._stop_event.wait(0.05)
+                continue
 
             if raw is None:
                 self._stop_event.wait(0.005)
                 continue
 
+            # Discard initial frames — some cameras need a warm-up
+            # period before producing usable frames.
+            if warmup_frames > 0:
+                warmup_frames -= 1
+                self._logger.debug(
+                    "Warm-up frame discarded (%d remaining).", warmup_frames,
+                )
+                continue
+
             processed = self._frame_mgr.process(raw)
+
+            # Enqueue immediately so the user sees the camera feed
+            # without waiting for the (slow) first pose detection.
+            try:
+                self._frame_queue.put_nowait(processed)
+            except queue.Full:
+                try:
+                    self._frame_queue.get_nowait()
+                except queue.Empty:
+                    pass
+                self._frame_queue.put(processed)
 
             self._logger.debug(
                 "Frame size: %dx%d",
