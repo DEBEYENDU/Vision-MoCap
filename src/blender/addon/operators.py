@@ -182,9 +182,16 @@ class VISIONMOCAP_OT_import_bvh(Operator, ImportHelper):
 
         frames = set()
         if arm_obj.animation_data and arm_obj.animation_data.action:
-            for fc in arm_obj.animation_data.action.fcurves:
-                for kp in fc.keyframe_points:
-                    frames.add(int(kp.co[0]))
+            action = arm_obj.animation_data.action
+            # Blender 4.3+ (layered actions) exposes the frame range
+            # directly; older versions expose fcurves with keyframes.
+            if hasattr(action, "frame_range"):
+                start, end = action.frame_range
+                frames = {int(start), int(end)}
+            else:
+                for fc in action.fcurves:
+                    for kp in fc.keyframe_points:
+                        frames.add(int(kp.co[0]))
 
         if not frames:
             return
@@ -193,16 +200,25 @@ class VISIONMOCAP_OT_import_bvh(Operator, ImportHelper):
         end = max(frames)
 
         bpy.ops.object.mode_set(mode="POSE")
-        bpy.ops.nla.bake(
-            frame_start=start,
-            frame_end=end,
-            step=1,
-            only_selected=False,
-            visual_keyings=True,
-            clear_constraints=False,
-            clear_parents=False,
-            bake_types={"POSE"},
-        )
+        kwargs = {
+            "frame_start": start,
+            "frame_end": end,
+            "step": 1,
+            "only_selected": False,
+            "clear_constraints": False,
+            "clear_parents": False,
+            "bake_types": {"POSE"},
+        }
+        # Blender 4.2 used "visual_keyings"; 4.3+ renamed it to
+        # "visual_keying".  Probe accepts either.
+        if "visual_keyings" in (
+            p.identifier
+            for p in bpy.ops.nla.bake.get_rna_type().properties
+        ):
+            kwargs["visual_keyings"] = True
+        else:
+            kwargs["visual_keying"] = True
+        bpy.ops.nla.bake(**kwargs)
         bpy.ops.object.mode_set(mode="OBJECT")
 
 

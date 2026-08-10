@@ -65,3 +65,8 @@ class Bone:
     def direction(self) -> Vector3D:
         """Unit vector pointing from head toward tail in the bind pose."""
         return (self.tail_position - self.head_position).normalize()
+
+    @property
+    def is_root(self) -> bool:
+        """True if this bone is the root of the skeleton hierarchy."""
+        return self.parent is None

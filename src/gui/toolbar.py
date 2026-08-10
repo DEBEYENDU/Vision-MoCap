@@ -34,6 +34,7 @@ class Toolbar(ctk.CTkFrame):
         stop_pb        — Stop and reset playback.
         step_fwd       — Step forward one frame.
         step_back      — Step backward one frame.
+        create_anim    — Convert the loaded recording into an animation.
         export         — Export the last recording.
         settings       — Open the settings dialog.
         exit           — Quit the application.
@@ -52,6 +53,7 @@ class Toolbar(ctk.CTkFrame):
         on_stop_playback: Optional[Callable[[], None]] = None,
         on_step_forward: Optional[Callable[[], None]] = None,
         on_step_backward: Optional[Callable[[], None]] = None,
+        on_create_animation: Optional[Callable[[], None]] = None,
         on_export: Optional[Callable[[], None]] = None,
         on_blender: Optional[Callable[[], None]] = None,
         on_settings: Optional[Callable[[], None]] = None,
@@ -174,6 +176,15 @@ class Toolbar(ctk.CTkFrame):
 
         sep2 = ctk.CTkLabel(self, text="  |  ")
         sep2.grid(row=0, column=col, padx=2, pady=4)
+        col += 1
+
+        self._create_anim_btn = ctk.CTkButton(
+            self,
+            text="Create Animation",
+            command=on_create_animation or self._noop,
+            state=ctk.DISABLED,
+        )
+        self._create_anim_btn.grid(row=0, column=col, padx=2, pady=4)
         col += 1
 
         self._export_btn = ctk.CTkButton(
@@ -346,6 +357,22 @@ class Toolbar(ctk.CTkFrame):
         self._stop_pb_btn.configure(state=ctk.DISABLED)
         self._step_fwd_btn.configure(state=ctk.DISABLED)
         self._step_bwd_btn.configure(state=ctk.DISABLED)
+
+    def enable_animation(self) -> None:
+        """Enable the Create Animation button (recording loaded)."""
+        self._create_anim_btn.configure(state=ctk.NORMAL)
+
+    def disable_animation(self) -> None:
+        """Disable the Create Animation button."""
+        self._create_anim_btn.configure(state=ctk.DISABLED)
+
+    def set_animation_created(self) -> None:
+        """Mark the animation as created (button reflects regeneration)."""
+        self._create_anim_btn.configure(text="Recreate Animation")
+
+    def set_animation_cleared(self) -> None:
+        """Reset the animation button after unload."""
+        self._create_anim_btn.configure(text="Create Animation")
 
     def enable_export(self) -> None:
         """Enable the export button (recording data available)."""

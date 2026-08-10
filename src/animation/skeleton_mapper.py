@@ -225,17 +225,17 @@ class SkeletonMapper:
     ) -> Dict[str, Tuple[Vector3D, Vector3D]]:
         """Map a single pose frame to bone head/tail positions.
 
+        Bones whose landmark indices are out of range for this pose
+        result (incomplete/missing landmarks) are skipped, matching the
+        Retargeter's contract of tolerant partial mappings.
+
         Args:
             pose_result: A single frame's pose data from the estimator.
 
         Returns:
             ``{bone_name: (head_position, tail_position)}`` for every
-            bone in the mapping.  Both positions are in the converted
-            coordinate space.
-
-        Raises:
-            ValueError: If a required landmark index is out of range for
-                this pose result.
+            bone in the mapping whose landmarks are present.  Both
+            positions are in the converted coordinate space.
         """
         landmarks = (
             pose_result.world_landmarks
@@ -250,10 +250,7 @@ class SkeletonMapper:
             tail_idx = entry["tail"]
 
             if head_idx > max_idx or tail_idx > max_idx:
-                raise ValueError(
-                    f"Landmark index out of range for bone '{bone_name}': "
-                    f"head={head_idx}, tail={tail_idx}, max={max_idx}."
-                )
+                continue
 
             head_pos = self._landmark_to_vector(landmarks[head_idx])
             tail_pos = self._landmark_to_vector(landmarks[tail_idx])

@@ -542,6 +542,7 @@ class MainWindow(GUIAppBase):
             on_stop_playback=self._on_stop_playback,
             on_step_forward=self._on_step_forward,
             on_step_backward=self._on_step_backward,
+            on_create_animation=self._on_create_animation,
             on_export=self._on_export,
             on_blender=self._on_send_to_blender,
             on_settings=self._on_settings,
@@ -713,6 +714,8 @@ class MainWindow(GUIAppBase):
         src_name = src_path.name if src_path else Path(path).name
         self._toolbar.set_playback_loaded()
         self._toolbar.set_filters_enabled(True)
+        self._toolbar.enable_animation()
+        self._toolbar.set_animation_cleared()
         self._status_bar.set_playback_status("Loaded")
         self._info_panel.set_playback_source(src_name)
         self._info_panel.set_playback_state("STOPPED")
@@ -722,6 +725,22 @@ class MainWindow(GUIAppBase):
         self._update_timeline_display()
         self._toolbar.enable_blender()
         self._status_bar.flash(f"Loaded {src_name}", "INFO")
+
+    def _on_create_animation(self) -> None:
+        """Convert the loaded recording into an AnimationClip."""
+        ok = self._controller.create_animation()
+        if not ok:
+            return
+        self._toolbar.set_animation_created()
+        clip = self._controller.animation_clip
+        if clip is not None:
+            self._info_panel.set_playback_frame(
+                0, clip.frame_count
+            )
+            self._info_panel.set_playback_duration(clip.duration)
+            self._status_bar.flash(
+                f"Animation created: {clip.frame_count} keyframes", "INFO"
+            )
 
     def _on_play_playback(self) -> None:
         """Start or restart playback."""

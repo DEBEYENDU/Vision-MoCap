@@ -24,10 +24,12 @@ from numpy.typing import NDArray
 from src.animation.animation_clip import AnimationClip
 from src.animation.animation_engine import AnimationEngine
 from src.animation.avatar import Avatar
+from src.animation.avatar_templates import build_mixamo_avatar
 from src.animation.bone import Bone
 from src.animation.bvh_exporter import BvhExporter
 from src.animation.csv_exporter import CsvExporter
 from src.animation.keyframe import InterpolationType
+from src.animation.motion_to_animation import MotionToAnimationConverter
 from src.animation.npy_exporter import NpyExporter
 from src.blender.exporter import BlenderExporter as BlenderExporterService
 from src.animation.retargeted_motion import RetargetedMotion
@@ -36,6 +38,7 @@ from src.animation.skeleton_mapper import (
     PRESET_MIXAMO,
     SkeletonMapper,
 )
+from src.core.exceptions import RetargetingError
 from src.core.models import Vector3D
 from src.camera.device import CameraDevice
 from src.camera.manager import CameraManager
@@ -61,62 +64,8 @@ from src.recording.session_manager import SessionManager
 
 
 def _build_mixamo_avatar() -> Avatar:
-    """Build an Avatar matching the bones of the Mixamo skeleton preset."""
-    bones_data: list[dict] = [
-        # (name, parent, children, head, tail)
-        ("Hips",         None,  ["Spine", "LeftUpLeg", "RightUpLeg"],
-         Vector3D(0.0, 0.0, 0.0), Vector3D(0.0, 0.1, 0.0)),
-        ("Spine",        "Hips",  ["Spine1"],
-         Vector3D(0.0, 0.1, 0.0), Vector3D(0.0, 0.25, 0.0)),
-        ("Spine1",       "Spine", ["Spine2", "LeftShoulder", "RightShoulder"],
-         Vector3D(0.0, 0.25, 0.0), Vector3D(0.0, 0.4, 0.0)),
-        ("Spine2",       "Spine1",["Neck"],
-         Vector3D(0.0, 0.4, 0.0), Vector3D(0.0, 0.5, 0.0)),
-        ("Neck",         "Spine2",["Head"],
-         Vector3D(0.0, 0.5, 0.0), Vector3D(0.0, 0.55, 0.0)),
-        ("Head",         "Neck",  [],
-         Vector3D(0.0, 0.55, 0.0), Vector3D(0.0, 0.65, 0.0)),
-        ("LeftShoulder", "Spine1",["LeftUpperArm"],
-         Vector3D(0.05, 0.25, 0.0), Vector3D(0.08, 0.25, 0.0)),
-        ("LeftUpperArm", "LeftShoulder",["LeftForearm"],
-         Vector3D(0.08, 0.25, 0.0), Vector3D(0.15, 0.22, 0.0)),
-        ("LeftForearm",  "LeftUpperArm",["LeftHand"],
-         Vector3D(0.15, 0.22, 0.0), Vector3D(0.22, 0.18, 0.0)),
-        ("LeftHand",     "LeftForearm",[],
-         Vector3D(0.22, 0.18, 0.0), Vector3D(0.27, 0.16, 0.0)),
-        ("RightShoulder","Spine1",["RightUpperArm"],
-         Vector3D(-0.05, 0.25, 0.0), Vector3D(-0.08, 0.25, 0.0)),
-        ("RightUpperArm","RightShoulder",["RightForearm"],
-         Vector3D(-0.08, 0.25, 0.0), Vector3D(-0.15, 0.22, 0.0)),
-        ("RightForearm", "RightUpperArm",["RightHand"],
-         Vector3D(-0.15, 0.22, 0.0), Vector3D(-0.22, 0.18, 0.0)),
-        ("RightHand",    "RightForearm",[],
-         Vector3D(-0.22, 0.18, 0.0), Vector3D(-0.27, 0.16, 0.0)),
-        ("LeftUpLeg",    "Hips", ["LeftLeg"],
-         Vector3D(0.05, 0.0, 0.0), Vector3D(0.05, -0.3, 0.0)),
-        ("LeftLeg",      "LeftUpLeg",["LeftFoot"],
-         Vector3D(0.05, -0.3, 0.0), Vector3D(0.05, -0.6, 0.0)),
-        ("LeftFoot",     "LeftLeg",["LeftToeBase"],
-         Vector3D(0.05, -0.6, 0.0), Vector3D(0.05, -0.7, 0.05)),
-        ("LeftToeBase",  "LeftFoot",[],
-         Vector3D(0.05, -0.7, 0.05), Vector3D(0.05, -0.7, 0.15)),
-        ("RightUpLeg",   "Hips", ["RightLeg"],
-         Vector3D(-0.05, 0.0, 0.0), Vector3D(-0.05, -0.3, 0.0)),
-        ("RightLeg",     "RightUpLeg",["RightFoot"],
-         Vector3D(-0.05, -0.3, 0.0), Vector3D(-0.05, -0.6, 0.0)),
-        ("RightFoot",    "RightLeg",["RightToeBase"],
-         Vector3D(-0.05, -0.6, 0.0), Vector3D(-0.05, -0.7, 0.05)),
-        ("RightToeBase", "RightFoot",[],
-         Vector3D(-0.05, -0.7, 0.05), Vector3D(-0.05, -0.7, 0.15)),
-    ]
-    bones = [
-        Bone(
-            name=name, parent=parent, children=children,
-            head_position=head, tail_position=tail,
-        )
-        for name, parent, children, head, tail in bones_data
-    ]
-    return Avatar(name="MixamoRig", root_bone="Hips", bones=bones)
+    """Build the Mixamo skeleton avatar (shared template)."""
+    return build_mixamo_avatar()
 
 
 class AppController:
@@ -169,6 +118,10 @@ class AppController:
         # Playback (GUI-thread only — no separate worker needed)
         self._playback_ctrl = PlaybackController()
         self._playback_renderer = PlaybackRenderer(self._renderer)
+
+        # Animation (created on demand from the loaded sequence)
+        self._animation_clip: Optional[AnimationClip] = None
+        self._animation_converter: Optional[MotionToAnimationConverter] = None
 
         # Filter state
         self._original_sequence: Optional[MotionSequence] = None
@@ -637,11 +590,15 @@ class AppController:
             if seq is not None:
                 self._original_sequence = deep_copy_sequence(seq)
                 self._filters_enabled = False
+            self._animation_clip = None
+            self._animation_converter = None
         return ok
 
     def unload_recording(self) -> None:
         """Unload the current playback recording."""
         self._playback_ctrl.unload()
+        self._animation_clip = None
+        self._animation_converter = None
 
     def play_playback(self) -> None:
         """Start or restart playback from the current position."""
@@ -770,6 +727,55 @@ class AppController:
         return self._playback_ctrl.current_time_seconds
 
     # ------------------------------------------------------------------
+    # Animation
+    # ------------------------------------------------------------------
+
+    @property
+    def animation_clip(self) -> Optional[AnimationClip]:
+        """The in-memory AnimationClip created from the loaded sequence."""
+        return self._animation_clip
+
+    @property
+    def has_animation(self) -> bool:
+        """True if an AnimationClip has been created from the sequence."""
+        return self._animation_clip is not None
+
+    def create_animation(self) -> bool:
+        """Convert the loaded playback sequence into an AnimationClip.
+
+        Uses the shared MotionToAnimationConverter (Mixamo preset).
+        The resulting clip is kept in memory and can be exported
+        without re-retargeting.
+
+        Returns:
+            True on success, False if no sequence is loaded or
+            conversion fails.
+        """
+        seq = self._playback_ctrl.sequence
+        if seq is None:
+            self._emit("WARNING", "No playback sequence loaded.")
+            return False
+
+        converter = MotionToAnimationConverter()
+        try:
+            self._animation_clip = converter.convert(seq)
+            self._animation_converter = converter
+            self._emit(
+                "INFO",
+                f"Animation created: {self._animation_clip.frame_count} "
+                f"keyframes, {self._animation_clip.duration:.2f}s.",
+            )
+            return True
+        except RetargetingError as exc:
+            self._logger.exception("Animation creation failed")
+            self._emit("ERROR", str(exc))
+            return False
+        except Exception as exc:
+            self._logger.exception("Animation creation failed")
+            self._emit("ERROR", f"Animation creation failed: {exc}")
+            return False
+
+    # ------------------------------------------------------------------
     # Export
     # ------------------------------------------------------------------
 
@@ -792,18 +798,20 @@ class AppController:
             return False
 
         try:
-            mapper = SkeletonMapper(preset="mixamo")
-            avatar = _build_mixamo_avatar()
-            retargeter = Retargeter(mapper=mapper, avatar=avatar)
-            retargeted: RetargetedMotion = retargeter.retarget(seq)
-            engine = AnimationEngine()
-            clip: AnimationClip = engine.convert(
-                retargeted, interpolation=InterpolationType.LINEAR,
+            converter = MotionToAnimationConverter()
+            clip = (
+                self._animation_clip
+                if self.has_animation
+                else converter.convert(seq, interpolation=InterpolationType.LINEAR)
             )
-            exporter = BvhExporter(avatar, clip)
+            exporter = BvhExporter(converter.avatar, clip)
             exporter.export(output_path)
             self._emit("INFO", f"BVH exported to {output_path.name}")
             return True
+        except RetargetingError as exc:
+            self._logger.exception("BVH export failed")
+            self._emit("ERROR", str(exc))
+            return False
         except Exception as exc:
             self._logger.exception("BVH export failed")
             self._emit("ERROR", f"BVH export failed: {exc}")
@@ -868,17 +876,17 @@ class AppController:
             self._emit("WARNING", "No playback sequence to export.")
             return False
         try:
-            mapper = SkeletonMapper(preset="mixamo")
-            avatar = _build_mixamo_avatar()
-            retargeter = Retargeter(mapper=mapper, avatar=avatar)
-            retargeted = retargeter.retarget(seq)
-            engine = AnimationEngine()
-            clip = engine.convert(retargeted)
+            converter = MotionToAnimationConverter()
+            clip = converter.convert(seq)
             blender_cfg = self._config.blender
             exporter = BlenderExporterService(blender_cfg)
-            exporter.send_to_blender(clip, avatar)
+            exporter.send_to_blender(clip, converter.avatar)
             self._emit("INFO", "Exported to Blender.")
             return True
+        except RetargetingError as exc:
+            self._logger.exception("Blender export failed")
+            self._emit("ERROR", str(exc))
+            return False
         except Exception as exc:
             self._logger.exception("Blender export failed")
             self._emit("ERROR", f"Blender export failed: {exc}")

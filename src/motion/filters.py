@@ -403,6 +403,12 @@ class OutlierRemovalFilter(SequenceProcessor):
     ) -> None:
         total = len(poses)
 
+        def _ensure_landmark(pose: PoseResult) -> None:
+            while len(pose.landmarks) <= landmark_idx:
+                pose.landmarks.append(
+                    Landmark(x=0.0, y=0.0, z=0.0, visibility=0.0)
+                )
+
         for i in range(total):
             if valid[i]:
                 continue
@@ -422,6 +428,7 @@ class OutlierRemovalFilter(SequenceProcessor):
             if prev_idx is None and next_idx is None:
                 continue
             if prev_idx is None:
+                _ensure_landmark(poses[i])
                 src = poses[next_idx].landmarks[landmark_idx]
                 poses[i].landmarks[landmark_idx] = Landmark(
                     x=src.x,
@@ -432,6 +439,7 @@ class OutlierRemovalFilter(SequenceProcessor):
                 valid[i] = True
                 continue
             if next_idx is None:
+                _ensure_landmark(poses[i])
                 src = poses[prev_idx].landmarks[landmark_idx]
                 poses[i].landmarks[landmark_idx] = Landmark(
                     x=src.x,
@@ -442,6 +450,7 @@ class OutlierRemovalFilter(SequenceProcessor):
                 valid[i] = True
                 continue
 
+            _ensure_landmark(poses[i])
             prev_lm = poses[prev_idx].landmarks[landmark_idx]
             next_lm = poses[next_idx].landmarks[landmark_idx]
             span = next_idx - prev_idx

@@ -26,14 +26,19 @@ VisionMoCap Studio is a production-grade desktop application that captures human
 | **Configuration** | JSON-based configuration with field-level validation |
 | **Logging** | Rotating file logger with configurable level and size limits |
 
-### 🟡 Partially Implemented
+### ✅ Implemented
 
 | Feature | Status |
 |---------|--------|
-| **Animation System** | Core data structures exist (`AnimationClip`, `Keyframe`, `Bone`, `Avatar`). No export pipeline. |
-| **Blender Integration** | Abstract base class exists. No concrete implementation. |
-| **Motion Smoothing** | 5 filters implemented (MovingAverage, ExponentialSmoothing, OutlierRemoval, OneEuro, SavitzkyGolay). Configurable via GUI FilterDialog with per-filter parameters. |
-| **Retargeting** | `SkeletonMapper` and `Retargeter` classes exist with 4 presets. Not connected to pipeline. |
+| **Motion Processing** | `MotionProcessor` pipeline with 6 filters (OutlierRemoval, LinearInterpolation, MovingAverage, ExponentialSmoothing, OneEuro, SavitzkyGolay). Configurable via GUI FilterDialog. Preserves original recording. |
+| **Skeleton System** | `Bone` / `Avatar` hierarchy with bind-pose, bone lengths, and direction vectors. |
+| **Human Skeleton Mapping** | `SkeletonMapper` with 4 rig presets (Mixamo, Blender, VRM, Ready Player Me). |
+| **Motion → Animation** | `Retargeter` (landmarks → bone transforms with quaternion rotations), `AnimationEngine` (→ `AnimationClip`), and the validated `MotionToAnimationConverter` entry point. |
+| **Retargeting** | Source human skeleton → target character mapping with rest-pose handling; preset-driven and custom mappings. |
+| **CVS Export** | CSV export of pose data. |
+| **NPY Export** | NumPy binary export of pose data. |
+| **BVH Export** | Full BVH export (`HIERARCHY`/`MOTION`, ZXY Euler, parent-space rotations, root translation). |
+| **Animation Export** | In-GUI "Create Animation" button converts any loaded recording into an `AnimationClip`, then exports to BVH directly. |
 
 ---
 
