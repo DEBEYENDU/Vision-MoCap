@@ -6,7 +6,7 @@ import logging
 import time
 from typing import Optional
 
-from src.motion.motion_sequence import MotionSequence
+from src.motion.motion_sequence import DEFAULT_FPS, MotionSequence
 from src.playback.playback_state import PlaybackState
 from src.pose.pose_result import PoseResult
 
@@ -132,11 +132,16 @@ class PlaybackPlayer:
         """
         if self._state != PlaybackState.PLAYING or self._sequence is None:
             return None
+        if not self._sequence.pose_results:
+            self._logger.debug(
+                "advance() on an empty sequence — nothing to play."
+            )
+            return None
 
         elapsed = time.perf_counter() - self._play_start_time
         total_wall = elapsed + self._accumulated_time
         sequence_time = total_wall * self._speed
-        target = int(sequence_time * self._sequence.average_fps)
+        target = int(sequence_time * self._resolve_fps())
 
         if target >= len(self._sequence.pose_results):
             self._current_frame = len(self._sequence.pose_results) - 1
@@ -166,7 +171,7 @@ class PlaybackPlayer:
             return False
 
         self._current_frame = frame
-        frame_time = frame / self._sequence.average_fps
+        frame_time = frame / self._resolve_fps()
         self._accumulated_time = frame_time / self._speed
         self._play_start_time = time.perf_counter()
 
@@ -286,7 +291,25 @@ class PlaybackPlayer:
     def average_fps(self) -> float:
         if self._sequence is None:
             return 0.0
-        return self._sequence.average_fps
+        return self._resolve_fps()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _resolve_fps(self) -> float:
+        """Return a valid positive frame rate for the loaded sequence.
+
+        Delegates to the central timing mechanism on MotionSequence
+        (:meth:`MotionSequence.resolve_average_fps`), which preserves a
+        valid stored FPS, derives one from per-frame timestamps, or
+        applies the documented fallback.  A defensive guard keeps this
+        method division-safe under all circumstances.
+        """
+        if self._sequence is None:
+            return DEFAULT_FPS
+        fps = self._sequence.resolve_average_fps()
+        return fps if fps > 0.0 else DEFAULT_FPS
 
     @property
     def accumulated_time(self) -> float:

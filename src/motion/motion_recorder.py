@@ -12,7 +12,10 @@ import time
 from pathlib import Path
 from typing import List, Optional
 
-from src.motion.motion_sequence import MotionSequence
+from src.motion.motion_sequence import (
+    MotionSequence,
+    fps_from_timestamps,
+)
 from src.pose.pose_result import PoseResult
 
 
@@ -118,7 +121,11 @@ class MotionRecorder:
         end_time = time.perf_counter()
         duration = end_time - self._start_time - self._total_paused
         total_frames = len(self._buffer)
-        average_fps = total_frames / duration if duration > 0.0 else 0.0
+        average_fps = fps_from_timestamps(
+            [pr.timestamp for pr in self._buffer]
+        )
+        if average_fps is None:
+            average_fps = total_frames / duration if duration > 0.0 else 0.0
         self._logger.info(
             "Recording stopped: %d frames over %.2f s (%.1f FPS).",
             total_frames,

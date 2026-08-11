@@ -27,7 +27,7 @@ from src.animation.retargeted_motion import RetargetedMotion
 from src.animation.retargeter import Retargeter
 from src.animation.skeleton_mapper import SkeletonMapper
 from src.core.exceptions import RetargetingError
-from src.motion.motion_sequence import MotionSequence
+from src.motion.motion_sequence import MotionSequence, is_valid_fps
 
 _ERROR_EMPTY = "Cannot create animation: the recording is empty."
 _ERROR_NO_VALID_POSES = (
@@ -39,6 +39,10 @@ _ERROR_NO_MOTION = (
 )
 _ERROR_NO_BONES = (
     "Cannot create animation: no mapped bones available for retargeting."
+)
+_ERROR_INVALID_FPS = (
+    "Cannot create animation: invalid frame rate {value!r}. A frame "
+    "rate must be a positive finite number greater than zero."
 )
 
 
@@ -141,6 +145,8 @@ class MotionToAnimationConverter:
         self.validate(sequence)
         if not self._mapper.bone_names:
             raise RetargetingError(_ERROR_NO_BONES)
+        if fps is not None and not is_valid_fps(fps):
+            raise RetargetingError(_ERROR_INVALID_FPS.format(value=fps))
 
         motion = self.retarget(sequence)
         try:

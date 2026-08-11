@@ -2,16 +2,81 @@
 
 Provides a serialisable container for recorded pose data with timing
 metadata. Includes JSON serialisation helpers for persistence.
+
+FPS integrity
+-------------
+``average_fps`` is the single source of truth for frame-rate timing
+across the application (playback, animation, export).  A sequence must
+never expose an invalid frame rate (zero, negative, NaN, infinity).
+The dataclass :meth:`__post_init__` repairs an invalid ``average_fps``
+at construction time via :meth:`resolve_average_fps`:
+
+1. A stored valid FPS is preserved.
+2. Otherwise FPS is derived from the real per-frame timestamps:
+   ``(frame_count - 1) / (last_timestamp - first_timestamp)``.
+3. If no usable timing information exists, the documented fallback
+   (:data:`DEFAULT_FPS`) is used and a warning is logged.
 """
 
 from __future__ import annotations
 
 import json
+import logging
+import math
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from src.pose.pose_result import Landmark, PoseResult
+
+#: Fallback frame rate used when a recording carries no usable timing
+#: information.  Documented in the user guide and log messages.
+DEFAULT_FPS: float = 30.0
+
+_LOGGER = logging.getLogger(__name__)
+
+_FALLBACK_WARNING = (
+    "Recording has no valid timing information. Using fallback FPS: %.1f"
+)
+
+
+def is_valid_fps(value: Any) -> bool:
+    """Return True if *value* is a usable frame rate.
+
+    A valid FPS must be greater than zero, finite, and not NaN.
+    """
+    return (
+        isinstance(value, (int, float))
+        and not isinstance(value, bool)
+        and math.isfinite(value)
+        and value > 0.0
+    )
+
+
+def fps_from_timestamps(timestamps: Sequence[Any]) -> Optional[float]:
+    """Derive an average frame rate from per-frame timestamps.
+
+    FPS is computed as ``(frame_count - 1) / (last - first)`` over the
+    finite timestamps in the sequence.
+
+    Args:
+        timestamps: One timestamp per recorded frame, in order.
+
+    Returns:
+        A positive finite FPS, or None when it cannot be computed
+        (fewer than two frames, duplicate timestamps, invalid or
+        non-finite values, or a non-positive time span).
+    """
+    finite = [
+        t for t in timestamps
+        if isinstance(t, (int, float)) and math.isfinite(t)
+    ]
+    if len(finite) < 2:
+        return None
+    span = finite[-1] - finite[0]
+    if span <= 0.0 or not math.isfinite(span):
+        return None
+    return (len(finite) - 1) / span
 
 
 @dataclass
@@ -33,6 +98,71 @@ class MotionSequence:
     total_frames: int = 0
     average_fps: float = 0.0
     duration: float = 0.0
+
+    # ------------------------------------------------------------------
+    # Construction-time integrity repair
+    # ------------------------------------------------------------------
+
+    def __post_init__(self) -> None:
+        """Normalise timing fields so the sequence is always usable.
+
+        * ``average_fps`` is repaired via :meth:`resolve_average_fps`
+          (preserve valid values, derive from timestamps, or fall back).
+        * ``total_frames`` is reconciled with the actual pose list.
+        * ``duration`` is derived from timestamps (or FPS) when missing.
+        """
+        if not is_valid_fps(self.average_fps):
+            self.resolve_average_fps()
+
+        if self.pose_results and self.total_frames != len(self.pose_results):
+            self.total_frames = len(self.pose_results)
+
+        if self.pose_results and self.duration <= 0.0:
+            derived = fps_from_timestamps(
+                [pr.timestamp for pr in self.pose_results]
+            )
+            if derived is not None:
+                self.duration = (self.total_frames - 1) / derived
+            elif is_valid_fps(self.average_fps):
+                self.duration = self.total_frames / self.average_fps
+
+    # ------------------------------------------------------------------
+    # FPS resolution (central timing mechanism)
+    # ------------------------------------------------------------------
+
+    def resolve_average_fps(self) -> float:
+        """Resolve a valid frame rate for this sequence.
+
+        Resolution order:
+
+        1. If the stored ``average_fps`` is already valid it is
+           preserved and returned.
+        2. Otherwise FPS is computed from the real per-frame
+           timestamps (``(n-1) / (last - first)``).
+        3. If no usable timing information exists, the documented
+           fallback :data:`DEFAULT_FPS` is applied and a warning is
+           logged — invalid recording data is never hidden silently.
+
+        Returns:
+            The resolved (positive, finite) frame rate.
+        """
+        if is_valid_fps(self.average_fps):
+            return self.average_fps
+
+        derived = fps_from_timestamps(
+            [pr.timestamp for pr in self.pose_results]
+        )
+        if derived is not None:
+            self.average_fps = derived
+            _LOGGER.info(
+                "Derived FPS %.2f from %d frame timestamp(s).",
+                derived, len(self.pose_results),
+            )
+            return derived
+
+        self.average_fps = DEFAULT_FPS
+        _LOGGER.warning(_FALLBACK_WARNING, DEFAULT_FPS)
+        return self.average_fps
 
     # ------------------------------------------------------------------
     # Serialisation
@@ -60,8 +190,8 @@ class MotionSequence:
             A new MotionSequence with deserialised pose data.
         """
         return cls(
-            start_time=data["start_time"],
-            end_time=data.get("end_time", data["start_time"]),
+            start_time=data.get("start_time", 0.0),
+            end_time=data.get("end_time", data.get("start_time", 0.0)),
             total_frames=data.get("total_frames", len(data["pose_results"])),
             average_fps=data.get("average_fps", 0.0),
             duration=data.get("duration", 0.0),
@@ -124,7 +254,7 @@ def _pose_result_to_dict(pr: PoseResult) -> Dict[str, Any]:
 def _dict_to_pose_result(data: Dict[str, Any]) -> PoseResult:
     """Reconstruct a PoseResult from a dictionary."""
     return PoseResult(
-        timestamp=data["timestamp"],
+        timestamp=data.get("timestamp", 0.0),
         landmarks=[Landmark(**lm) for lm in data.get("landmarks", [])],
         world_landmarks=[
             Landmark(**lm) for lm in data.get("world_landmarks", [])

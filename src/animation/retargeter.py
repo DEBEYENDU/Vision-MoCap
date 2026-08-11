@@ -103,7 +103,7 @@ class Retargeter:
         return RetargetedMotion(
             frames=frames,
             avatar_name=self._avatar.name,
-            fps=sequence.average_fps,
+            fps=sequence.resolve_average_fps(),
             duration=duration,
         )
 

@@ -12,6 +12,7 @@ import logging
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
+from src.motion.motion_sequence import fps_from_timestamps
 from src.pose.pose_result import PoseResult
 
 
@@ -240,10 +241,24 @@ class RecordingSession:
         return time.monotonic() - self._start_wall
 
     def get_average_fps(self) -> float:
-        """Average FPS computed from recorded frame timestamps.
+        """Average FPS computed from the real recording timing.
+
+        Preference order:
+        1. Per-frame timestamps (``(n-1) / (last - first)``) — the real
+           timing information captured during recording.
+        2. ``frame_count / elapsed_seconds`` (wall-clock duration).
+        3. ``0.0`` when no frames are available (the MotionSequence
+           layer applies the documented fallback at construction).
 
         Returns 0.0 when no frames have been recorded yet.
         """
+        if not self._frames:
+            return 0.0
+        derived = fps_from_timestamps(
+            [pr.timestamp for pr in self._frames]
+        )
+        if derived is not None:
+            return derived
         if len(self._frames) < 2:
             return 0.0
         elapsed = self.elapsed_seconds

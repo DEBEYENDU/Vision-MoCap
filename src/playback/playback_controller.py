@@ -173,9 +173,14 @@ class PlaybackController:
         """
         if self._player.sequence is None:
             return False
+        total = self._player.total_frames
+        if total <= 0:
+            return False
         # Clamp progress to valid range
         progress = max(0.0, min(1.0, progress))
-        target_frame = int(progress * (self._player.total_frames - 1))
+        if total == 1:
+            return self.seek(0)
+        target_frame = int(progress * (total - 1))
         return self.seek(target_frame)
 
     def next_frame(self) -> Optional[PoseResult]:

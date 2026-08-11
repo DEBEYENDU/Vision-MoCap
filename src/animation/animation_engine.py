@@ -14,6 +14,12 @@ from src.animation.animation_clip import AnimationClip
 from src.animation.keyframe import InterpolationType, Keyframe
 from src.animation.retargeted_motion import RetargetedMotion
 from src.config.manager import AnimationConfig
+from src.motion.motion_sequence import DEFAULT_FPS, is_valid_fps
+
+_INVALID_FPS = (
+    "Invalid frame rate: {value!r}. A frame rate must be a positive "
+    "finite number greater than zero."
+)
 
 
 class AnimationEngine:
@@ -72,7 +78,12 @@ class AnimationEngine:
         if not motion.frames:
             raise ValueError("Cannot convert an empty RetargetedMotion.")
 
-        target_fps = fps if fps is not None else motion.fps
+        if fps is not None and not is_valid_fps(fps):
+            raise ValueError(_INVALID_FPS.format(value=fps))
+
+        target_fps = fps if fps is not None else (
+            motion.fps if is_valid_fps(motion.fps) else DEFAULT_FPS
+        )
         keyframes = self.generate_keyframes(
             motion,
             interpolation=interpolation,
@@ -119,7 +130,9 @@ class AnimationEngine:
         Returns:
             A list of Keyframe objects in chronological order.
         """
-        native_fps = motion.fps if motion.fps > 0.0 else 30.0
+        native_fps = motion.fps if is_valid_fps(motion.fps) else DEFAULT_FPS
+        if target_fps is not None and not is_valid_fps(target_fps):
+            raise ValueError(_INVALID_FPS.format(value=target_fps))
         effective_fps = target_fps if target_fps is not None else native_fps
 
         # Same rate — one keyframe per motion frame.
