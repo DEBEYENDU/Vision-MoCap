@@ -9,9 +9,10 @@
 5. [Recording Motion](#recording-motion)
 6. [Playback](#playback)
 7. [Motion Filters](#motion-filters)
-8. [Exporting](#exporting)
-9. [Blender Integration](#blender-integration)
-10. [Troubleshooting](#troubleshooting)
+8. [Creating an Animation](#creating-an-animation)
+9. [Exporting](#exporting)
+10. [Blender Integration](#blender-integration)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -138,8 +139,12 @@ sections:
 3. Strike a pose — the skeleton overlay tracks your movement.
 4. Click the red **Record** button to start capturing.
 5. Click **Stop** to save the recording.
-6. Click **Export** to save as JSON, or load the recording for more
-   export options.
+6. Click **Load** to open the recording, then **Create Animation**
+   to turn it into a character animation, and **Export** to save it
+   as BVH/CSV/NumPy or send it to Blender.
+
+> **Tip:** No camera handy? Load a demo recording from
+> `demo/sample_recordings/` and follow the playback steps below.
 
 ---
 
@@ -218,6 +223,27 @@ sequence.
 
 ---
 
+## Creating an Animation
+
+A recording is raw landmark data; **Create Animation** converts it
+into a character animation (`AnimationClip`) that can be exported
+and driven onto a rigged figure.
+
+1. Load a recording (or record one).
+2. Click **Create Animation** in the toolbar.  The button label
+   changes to **Recreate Animation** once a clip exists.
+3. If the recording is not suitable (e.g. no usable poses), the app
+   shows an error dialog explaining why — nothing is exported.
+4. Export the clip with the **Export** button (BVH) or send it to
+   Blender directly.
+
+The conversion runs: landmark validation → retargeting to a
+Mixamo-compatible skeleton → keyframe animation.  The result is
+cached, so exporting twice reuses the same clip unless the loaded
+recording changes.
+
+---
+
 ## Exporting
 
 Load a recording first, then click **Export**.  The file dialog
@@ -277,19 +303,23 @@ Child bones have 3 channels (Z/X/Y rotation).
 
 ### Sending from VisionMoCap
 
-With a recording loaded, click the **Blender** button in the
-toolbar.  The app exports a temporary BVH file.  If
-``auto_launch`` is enabled in ``config.json``, Blender starts with
-the add-on pre-loaded.
+With a recording loaded, click **Create Animation** first, then the
+**Blender** button in the toolbar.  The app exports a temporary BVH
+file.  If ``auto_launch`` is enabled in ``config.json``, Blender
+starts with the add-on pre-loaded.
 
 ```json
 {
   "blender": {
-    "blender_executable": "blender",
+    "blender_executable": "C:\\Program Files\\Blender Foundation\\Blender 5.1\\blender.exe",
     "auto_launch": true
   }
 }
 ```
+
+> ``blender_executable`` must be the full path to the Blender
+> executable — a bare ``"blender"`` only works if Blender is on your
+> system PATH.  Tested with Blender 4.2+ and Blender 5.1.
 
 ---
 
