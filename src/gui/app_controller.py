@@ -38,12 +38,16 @@ from src.animation.skeleton_mapper import (
     PRESET_MIXAMO,
     SkeletonMapper,
 )
-from src.core.exceptions import RetargetingError
+from src.core.exceptions import (
+    CameraError,
+    PoseEstimationError,
+    RecordingError,
+    RetargetingError,
+)
 from src.core.models import Vector3D
 from src.camera.device import CameraDevice
 from src.camera.manager import CameraManager
 from src.config.manager import AppConfig, ConfigManager
-from src.core.exceptions import CameraError, PoseEstimationError
 from src.motion.base import SequenceProcessor, deep_copy_sequence
 from src.motion.filters import (
     ExponentialSmoothingFilter,
@@ -309,6 +313,7 @@ class AppController:
         log_counter = 0
         consecutive_errors = 0
         max_consecutive_errors = 5
+        max_reconnect_attempts = 3
         warmup_frames = 3  # discard first frames (camera warm-up)
 
         while not self._stop_event.is_set():
@@ -320,6 +325,13 @@ class AppController:
                     break
                 consecutive_errors += 1
                 if consecutive_errors >= max_consecutive_errors:
+                    if self._try_reconnect(max_reconnect_attempts):
+                        consecutive_errors = 0
+                        self._emit(
+                            "WARNING",
+                            "Camera reconnected automatically.",
+                        )
+                        continue
                     self._emit(
                         "ERROR",
                         f"Camera read failed {consecutive_errors} times consecutively. "
@@ -430,6 +442,26 @@ class AppController:
 
         self._logger.info("Capture thread stopped.")
 
+    def _try_reconnect(self, max_attempts: int) -> bool:
+        """Attempt to re-open the camera after a read failure.
+
+        Runs on the worker thread.  Each attempt waits briefly so a
+        physically unplugged camera has time to reappear.
+
+        Returns:
+            True if the camera was re-opened successfully.
+        """
+        for attempt in range(1, max_attempts + 1):
+            if self._stop_event.is_set():
+                return False
+            self._logger.info(
+                "Reconnect attempt %d/%d...", attempt, max_attempts,
+            )
+            if self._camera_mgr.reconnect():
+                return True
+            self._stop_event.wait(0.5 * attempt)
+        return False
+
     # ------------------------------------------------------------------
     # GUI-facing accessors
     # ------------------------------------------------------------------
@@ -520,7 +552,12 @@ class AppController:
             return None
 
         self._session_mgr.stop_session()
-        path = self._session_mgr.save_recording()
+        try:
+            path = self._session_mgr.save_recording()
+        except RecordingError as e:
+            self._logger.error("Recording save failed: %s", e)
+            self._emit("ERROR", f"Failed to save recording: {e}")
+            return None
         if path is None:
             self._emit("WARNING", "Recording stopped with no frames.")
             return None
@@ -653,6 +690,19 @@ class AppController:
     def step_playback_backward(self) -> None:
         """Step backward one frame (pauses if playing)."""
         self._playback_ctrl.previous_frame()
+
+    def set_playback_loop(self, enabled: bool) -> None:
+        """Enable or disable loop playback.
+
+        Args:
+            enabled: True to loop, False to stop at the end.
+        """
+        self._playback_ctrl.set_loop(enabled)
+
+    @property
+    def playback_loop_enabled(self) -> bool:
+        """Whether loop playback is currently enabled."""
+        return self._playback_ctrl.loop_enabled
 
     def get_playback_frame(self) -> Optional[NDArray[np.uint8]]:
         """Return a displayable BGR frame for the current playback position.
@@ -880,7 +930,12 @@ class AppController:
             clip = converter.convert(seq)
             blender_cfg = self._config.blender
             exporter = BlenderExporterService(blender_cfg)
-            exporter.send_to_blender(clip, converter.avatar)
+            ok = exporter.send_to_blender(clip, converter.avatar)
+            if not ok:
+                detail = exporter.last_error or "unknown reason"
+                self._logger.error("Blender export failed: %s", detail)
+                self._emit("ERROR", f"Blender export failed: {detail}")
+                return False
             self._emit("INFO", "Exported to Blender.")
             return True
         except RetargetingError as exc:

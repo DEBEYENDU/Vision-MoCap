@@ -10,6 +10,7 @@ import csv
 from pathlib import Path
 from typing import List
 
+from src.core.exceptions import AnimationExportError
 from src.motion.motion_sequence import MotionSequence
 
 
@@ -36,8 +37,14 @@ class CsvExporter:
         if not sequence.pose_results:
             raise ValueError("Cannot export empty sequence to CSV.")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        self._write_csv(sequence, output_path)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            self._write_csv(sequence, output_path)
+        except OSError as e:
+            raise AnimationExportError(
+                f"Failed to write CSV file {output_path}: {e}",
+                cause=e,
+            )
 
     @staticmethod
     def _header() -> List[str]:

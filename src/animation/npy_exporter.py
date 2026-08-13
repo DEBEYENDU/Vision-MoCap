@@ -12,6 +12,7 @@ from pathlib import Path
 import numpy as np
 from numpy.typing import NDArray
 
+from src.core.exceptions import AnimationExportError
 from src.motion.motion_sequence import MotionSequence
 
 
@@ -36,9 +37,15 @@ class NpyExporter:
         if not sequence.pose_results:
             raise ValueError("Cannot export empty sequence to NPY.")
 
-        output_path.parent.mkdir(parents=True, exist_ok=True)
-        data = self._build_array(sequence)
-        np.save(str(output_path), data)
+        try:
+            output_path.parent.mkdir(parents=True, exist_ok=True)
+            data = self._build_array(sequence)
+            np.save(str(output_path), data)
+        except (OSError, ValueError) as e:
+            raise AnimationExportError(
+                f"Failed to write NPY file {output_path}: {e}",
+                cause=e,
+            )
 
     @staticmethod
     def _build_array(sequence: MotionSequence) -> NDArray[np.float64]:

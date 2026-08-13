@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from src.core.exceptions import RecordingError
 from src.motion.motion_recorder import MotionRecorder
 from src.motion.motion_sequence import MotionSequence
 from src.pose.pose_result import PoseResult
@@ -190,14 +191,20 @@ class SessionManager:
             export_dict["fps_values"] = self._session.fps_values
 
         # Save outside the lock to avoid blocking the worker.
-        self._output_dir.mkdir(parents=True, exist_ok=True)
         timestamp_str = f"{time.time():.0f}"
         path = self._output_dir / f"recording_{timestamp_str}.json"
 
         import json
-        with open(path, "w", encoding="utf-8") as f:
-            json.dump(export_dict, f, indent=2, ensure_ascii=False)
-            f.write("\n")
+        try:
+            self._output_dir.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(export_dict, f, indent=2, ensure_ascii=False)
+                f.write("\n")
+        except (OSError, TypeError, ValueError) as e:
+            raise RecordingError(
+                f"Failed to save recording to {path}: {e}",
+                cause=e,
+            )
 
         self._last_saved_path = path
         self._logger.info(

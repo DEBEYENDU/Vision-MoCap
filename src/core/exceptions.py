@@ -21,6 +21,10 @@ class ConfigurationError(VisionMoCapError):
     """Raised when configuration loading or validation fails."""
 
 
+class ResourceNotFoundError(VisionMoCapError):
+    """Raised when a required resource (model, executable, file) is missing."""
+
+
 class CameraError(VisionMoCapError):
     """Raised when camera operations fail."""
 
@@ -31,6 +35,14 @@ class PoseEstimationError(VisionMoCapError):
 
 class MotionProcessingError(VisionMoCapError):
     """Raised when motion data processing fails."""
+
+
+class RecordingError(VisionMoCapError):
+    """Raised when recording operations or recording persistence fail."""
+
+
+class PlaybackError(VisionMoCapError):
+    """Raised when playback operations fail."""
 
 
 class AnimationExportError(VisionMoCapError):

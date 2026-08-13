@@ -25,6 +25,7 @@ from src.animation.avatar import Avatar
 from src.animation.bone import Bone
 from src.animation.keyframe import Keyframe
 from src.animation.retargeted_motion import BoneTransform
+from src.core.exceptions import AnimationExportError
 from src.core.models import Vector3D
 
 
@@ -84,14 +85,23 @@ class BvhExporter:
         Args:
             path: Destination file path.  Parent directories are created
                   automatically.
+
+        Raises:
+            AnimationExportError: If the file cannot be written.
         """
         path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
 
-        content = self._format_hierarchy() + self._format_motion()
+            content = self._format_hierarchy() + self._format_motion()
 
-        with open(path, "w", encoding="utf-8", newline="") as f:
-            f.write(content)
+            with open(path, "w", encoding="utf-8", newline="") as f:
+                f.write(content)
+        except (OSError, ValueError) as e:
+            raise AnimationExportError(
+                f"Failed to write BVH file {path}: {e}",
+                cause=e,
+            )
 
         self._logger.info(
             "BVH exported to %s (%d frames, %d bones).",
@@ -128,11 +138,9 @@ class BvhExporter:
         first_frame = self._clip.keyframes[0].bone_transforms
         offsets: Dict[str, Vector3D] = {}
 
-        root_pos = first_frame.get(self._avatar.root_bone)
-        if root_pos is not None:
-            offsets[self._avatar.root_bone] = Vector3D(0.0, 0.0, 0.0)
-        else:
-            offsets[self._avatar.root_bone] = Vector3D(0.0, 0.0, 0.0)
+        # Root OFFSET is always the origin (the root position is encoded
+        # in the motion channels, not the hierarchy).
+        offsets[self._avatar.root_bone] = Vector3D(0.0, 0.0, 0.0)
 
         for name in self._hierarchy_order:
             bone = self._avatar.bone(name)
