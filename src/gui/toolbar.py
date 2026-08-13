@@ -30,6 +30,7 @@ import customtkinter as ctk
 
 if TYPE_CHECKING:
     from src.camera.device import CameraDevice
+from src.gui.tooltip import Tooltip
 
 
 class Toolbar(ctk.CTkFrame):
@@ -71,6 +72,7 @@ class Toolbar(ctk.CTkFrame):
         on_stop_playback: Optional[Callable[[], None]] = None,
         on_step_forward: Optional[Callable[[], None]] = None,
         on_step_backward: Optional[Callable[[], None]] = None,
+        on_toggle_loop: Optional[Callable[[], None]] = None,
         on_create_animation: Optional[Callable[[], None]] = None,
         on_export: Optional[Callable[[], None]] = None,
         on_blender: Optional[Callable[[], None]] = None,
@@ -221,6 +223,16 @@ class Toolbar(ctk.CTkFrame):
         self._step_fwd_btn.grid(row=0, column=col, padx=2, pady=4)
         col += 1
 
+        self._loop_btn = ctk.CTkButton(
+            self._content,
+            text="Loop",
+            width=52,
+            command=on_toggle_loop or self._noop,
+            state=ctk.DISABLED,
+        )
+        self._loop_btn.grid(row=0, column=col, padx=2, pady=4)
+        col += 1
+
         sep2 = ctk.CTkLabel(self._content, text="  |  ")
         sep2.grid(row=0, column=col, padx=2, pady=4)
         col += 1
@@ -293,12 +305,17 @@ class Toolbar(ctk.CTkFrame):
         self._record_idle_color = self._record_btn.cget("fg_color")
         self._pause_rec_idle_color = self._pause_rec_btn.cget("fg_color")
         self._pause_pb_idle_color = self._pause_pb_btn.cget("fg_color")
+        self._loop_idle_color = self._loop_btn.cget("fg_color")
+        self._loop_hover_idle_color = self._loop_btn.cget("hover_color")
 
         # --- Wheel scrolling over the toolbar (see _on_mousewheel) ---
         toplevel = self.winfo_toplevel()
         for event in ("<MouseWheel>", "<Shift-MouseWheel>",
                       "<Button-4>", "<Button-5>"):
             toplevel.bind(event, self._on_mousewheel, add="+")
+
+        # --- Tooltips (hover hints; see Tooltip) ---
+        self._tooltips = self._attach_tooltips()
 
     # ------------------------------------------------------------------
     # Theme integration
@@ -312,6 +329,34 @@ class Toolbar(ctk.CTkFrame):
         """Keep the canvas viewport in sync when the app theme changes."""
         super()._set_appearance_mode(mode_string)
         self._canvas.configure(bg=self._viewport_bg_color())
+
+    def _attach_tooltips(self) -> dict[str, Tooltip]:
+        """Attach hover hints to the toolbar's interactive widgets."""
+        hints: dict[tk.Misc, str] = {
+            self._camera_menu: "Select the active camera",
+            self._start_btn: "Start the camera feed",
+            self._stop_btn: "Stop the camera feed",
+            self._record_btn: "Start / stop recording motion",
+            self._pause_rec_btn: "Pause / resume the recording",
+            self._load_btn: "Load a recording (JSON)",
+            self._play_btn: "Play or resume playback (Space)",
+            self._pause_pb_btn: "Pause / resume playback",
+            self._stop_pb_btn: "Stop playback and rewind",
+            self._step_bwd_btn: "Step one frame backward (\u2190)",
+            self._step_fwd_btn: "Step one frame forward (\u2192)",
+            self._loop_btn: "Toggle loop playback (L)",
+            self._create_anim_btn: "Convert the recording into an animation",
+            self._export_btn: "Export recording / animation",
+            self._blender_btn: "Send the animation to Blender",
+            self._settings_btn: "Open settings",
+            self._theme_btn: "Toggle light / dark theme",
+            self._filters_btn: "Open motion filter settings",
+            self._exit_btn: "Exit the application",
+        }
+        return {
+            id(widget): Tooltip(widget, text)
+            for widget, text in hints.items()
+        }
 
     # ------------------------------------------------------------------
     # Scrolling
@@ -469,6 +514,7 @@ class Toolbar(ctk.CTkFrame):
         self._pause_pb_btn.configure(state=ctk.DISABLED, text="Pause")
         self._step_fwd_btn.configure(state=ctk.NORMAL)
         self._step_bwd_btn.configure(state=ctk.NORMAL)
+        self._loop_btn.configure(state=ctk.NORMAL)
 
     def set_playback_playing(self) -> None:
         """Update buttons to indicate active playback."""
@@ -506,6 +552,27 @@ class Toolbar(ctk.CTkFrame):
         self._stop_pb_btn.configure(state=ctk.DISABLED)
         self._step_fwd_btn.configure(state=ctk.DISABLED)
         self._step_bwd_btn.configure(state=ctk.DISABLED)
+        self._loop_btn.configure(state=ctk.DISABLED)
+        self.set_loop_enabled(False)
+
+    def set_loop_enabled(self, enabled: bool) -> None:
+        """Highlight the Loop button when loop playback is active.
+
+        Args:
+            enabled: True when loop playback is enabled.
+        """
+        if enabled:
+            self._loop_btn.configure(
+                fg_color="#27ae60",
+                hover_color="#2ecc71",
+                text="Loop ON",
+            )
+        else:
+            self._loop_btn.configure(
+                fg_color=self._loop_idle_color,
+                hover_color=self._loop_hover_idle_color,
+                text="Loop",
+            )
 
     def enable_animation(self) -> None:
         """Enable the Create Animation button (recording loaded)."""

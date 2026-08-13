@@ -99,7 +99,8 @@ class PlaybackController:
         """
         pos = self._player.current_frame_index
         self._player.load(sequence)
-        self._player._current_frame = min(pos, self.total_frames - 1)
+        if self.total_frames > 0:
+            self._player.seek(min(pos, self.total_frames - 1))
         self._logger.info(
             "Sequence replaced: %d frames, %.2f s, %.1f FPS.",
             sequence.total_frames,
@@ -218,6 +219,19 @@ class PlaybackController:
             speed: Positive float.  1.0 = real-time.
         """
         self._player.set_speed(speed)
+
+    def set_loop(self, enabled: bool) -> None:
+        """Enable or disable loop playback.
+
+        Args:
+            enabled: True to loop, False to stop at the end.
+        """
+        self._player.set_loop(enabled)
+
+    @property
+    def loop_enabled(self) -> bool:
+        """Whether loop playback is currently enabled."""
+        return self._player.loop_enabled
 
     # ------------------------------------------------------------------
     # Query

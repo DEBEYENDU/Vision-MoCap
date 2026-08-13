@@ -18,10 +18,5 @@ if str(_PROJECT_ROOT) not in sys.path:
 
 collect_ignore = [
     "integration/blender_headless_test.py",
-    "integration/_probe.py",
-    "integration/_probe2.py",
-    "integration/_probe3.py",
-    "integration/_probe4.py",
-    "integration/_probe5.py",
-    "integration/_probe6.py",
+    "integration/_toolbar_smoke.py",
 ]

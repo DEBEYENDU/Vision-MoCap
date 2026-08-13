@@ -133,6 +133,23 @@ def _warmup_camera(index: int) -> None:
         pass
 
 
+def _backend_order(config: CameraConfig) -> List[Backend]:
+    """Return the backend candidates to try, most preferred first.
+
+    The configured backend is tried first; ``ANY`` (driver auto-select)
+    is always the final fallback so the manager works on platforms where
+    the configured backend is unavailable.
+    """
+    try:
+        preferred = Backend.from_string(config.backend)
+    except ValueError:
+        preferred = Backend.DIRECTSHOW
+    order = [preferred]
+    if Backend.ANY not in order:
+        order.append(Backend.ANY)
+    return order
+
+
 # ---------------------------------------------------------------------------
 # CameraManager
 # ---------------------------------------------------------------------------
@@ -154,18 +171,21 @@ class CameraManager:
         self._fps_monitor = _FPSMonitor()
         self._logger = logging.getLogger(self.__class__.__name__)
         self._camera_list: List[CameraDevice] = []
+        self._last_opened_index: int = -1
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def discover_cameras(self) -> List[CameraDevice]:
-        """Probe cameras 0–4 and keep the first working one open.
+        """Probe cameras and keep the first working one open.
 
-        Each index is tested with DSHOW (preceded by an ANY warm-up).
-        The first camera that returns a valid frame is kept open.
-        Subsequent indices are still probed (for the dropdown) but
-        their captures are released.
+        Indices ``0..max_camera_index-1`` (config, capped at 10) are
+        tested with the configured backend first, falling back to
+        ``ANY`` when a backend cannot open the device.  The first
+        camera that returns a valid frame is kept open; the remaining
+        indices are still probed (for the dropdown) but their captures
+        are released.
 
         Returns:
             A list of all probed ``CameraDevice`` instances for the
@@ -174,12 +194,15 @@ class CameraManager:
         self._camera_list.clear()
         self.close_camera()
 
-        for index in range(_MAX_PROBE_INDEX):
-            device, cap, frame = self._probe_capture(index)
+        max_index = max(1, min(self._config.max_camera_index, 10))
+        backends = _backend_order(self._config)
+
+        for index in range(max_index):
+            device, cap, frame = self._probe_capture(index, backends)
 
             if cap is not None and frame is not None and self._capture is None:
                 self._logger.info("Testing Camera %d...", index)
-                self._finalise_open(index, cap, frame, Backend.DIRECTSHOW)
+                self._finalise_open(index, cap, frame, device.backend)
                 self._logger.info(
                     "Camera %d selected.  Resolution: %dx%d",
                     index,
@@ -199,7 +222,12 @@ class CameraManager:
     def open_camera(self, index: int) -> bool:
         """Open *index* — only needed if the user switches camera.
 
-        If a camera is already open, it is closed first.
+        If a camera is already open, it is closed first.  The
+        configured backend is tried first, then ``ANY`` as fallback.
+
+        Raises:
+            CameraError: If the index is negative or no backend can
+                open the camera.
         """
         if index < 0:
             raise CameraError(
@@ -207,21 +235,33 @@ class CameraManager:
             )
         self.close_camera()
 
-        _warmup_camera(index)
-        cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-        if not cap.isOpened():
-            cap.release()
-            raise CameraError(f"Camera {index} did not respond to DSHOW.")
+        backends = _backend_order(self._config)
+        for backend in backends:
+            _warmup_camera(index)
+            cap = cv2.VideoCapture(index, backend)
+            if not cap.isOpened():
+                cap.release()
+                self._logger.debug(
+                    "Camera %d did not respond to %s.",
+                    index, backend.name.lower(),
+                )
+                continue
 
-        ret, frame = cap.read()
-        if not ret or frame is None or frame.size == 0:
-            cap.release()
-            raise CameraError(
-                f"Camera {index} opened with DSHOW but produced no frame."
-            )
+            ret, frame = cap.read()
+            if not ret or frame is None or frame.size == 0:
+                cap.release()
+                self._logger.debug(
+                    "Camera %d opened with %s but produced no frame.",
+                    index, backend.name.lower(),
+                )
+                continue
 
-        self._finalise_open(index, cap, frame, Backend.DIRECTSHOW)
-        return True
+            self._finalise_open(index, cap, frame, backend)
+            return True
+
+        raise CameraError(
+            f"Camera {index} did not respond to any available backend."
+        )
 
     def close_camera(self) -> None:
         if self._capture is not None:
@@ -239,6 +279,25 @@ class CameraManager:
     def switch_camera(self, index: int) -> bool:
         self.close_camera()
         return self.open_camera(index)
+
+    def reconnect(self) -> bool:
+        """Re-open the camera that was most recently active.
+
+        Used after a device disconnect to restore the capture pipeline
+        when the camera comes back.  Returns True if the camera was
+        re-opened successfully.
+        """
+        index = self._last_opened_index
+        if index < 0:
+            return False
+        try:
+            ok = self.open_camera(index)
+            if ok:
+                self._logger.info("Camera %d reconnected.", index)
+            return ok
+        except CameraError as e:
+            self._logger.warning("Reconnect failed for Camera %d: %s", index, e)
+            return False
 
     def get_frame(self) -> Optional[NDArray[np.uint8]]:
         if self._capture is None:
@@ -291,52 +350,65 @@ class CameraManager:
     # ------------------------------------------------------------------
 
     def _probe_capture(
-        self, index: int,
+        self,
+        index: int,
+        backends: Optional[List[Backend]] = None,
     ) -> tuple[CameraDevice, Optional[cv2.VideoCapture], Optional[NDArray[np.uint8]]]:
-        """Open *index* with DSHOW (ANY warm-up), read one frame.
+        """Open *index* and read one frame, trying each backend in turn.
 
         Returns ``(device, capture, frame)`` where *capture* and *frame*
-        are ``None`` if the camera did not respond.
+        are ``None`` if the camera did not respond on any backend.
         """
-        _warmup_camera(index)
-        try:
-            cap = cv2.VideoCapture(index, cv2.CAP_DSHOW)
-            if not cap.isOpened():
+        candidates = backends or _backend_order(self._config)
+
+        for backend in candidates:
+            _warmup_camera(index)
+            try:
+                cap = cv2.VideoCapture(index, backend)
+                if not cap.isOpened():
+                    cap.release()
+                    self._logger.debug(
+                        "Probe Camera %d: %s did not respond.",
+                        index, backend.name.lower(),
+                    )
+                    continue
+
+                ret, frame = cap.read()
+                if ret and frame is not None and frame.size > 0:
+                    h, w = frame.shape[:2]
+                    name = _get_camera_name(cap, index)
+                    fps = _safe_capture_property(cap, cv2.CAP_PROP_FPS, 0.0)
+                    device = CameraDevice(
+                        index=index, name=name,
+                        backend=backend, is_available=True,
+                        resolution_width=max(w, 1),
+                        resolution_height=max(h, 1), fps=fps,
+                    )
+                    # Discard the junk frame that follows the first successful
+                    # read (DSHOW on this camera returns ret=False on read 1).
+                    cap.read()
+                    return device, cap, frame
+
                 cap.release()
-                return (
-                    CameraDevice(
-                        index=index, name=f"Camera {index}",
-                        backend=Backend.DIRECTSHOW, is_available=False,
-                    ),
-                    None, None,
+                self._logger.debug(
+                    "Probe Camera %d: %s produced no valid frame.",
+                    index, backend.name.lower(),
                 )
-
-            ret, frame = cap.read()
-            if ret and frame is not None and frame.size > 0:
-                h, w = frame.shape[:2]
-                name = _get_camera_name(cap, index)
-                fps = _safe_capture_property(cap, cv2.CAP_PROP_FPS, 0.0)
-                device = CameraDevice(
-                    index=index, name=name,
-                    backend=Backend.DIRECTSHOW, is_available=True,
-                    resolution_width=max(w, 1),
-                    resolution_height=max(h, 1), fps=fps,
+            except cv2.error as e:
+                self._logger.debug(
+                    "Probe Camera %d: %s raised cv2.error: %s",
+                    index, backend.name.lower(), e,
                 )
-                # Discard the junk frame that follows the first successful
-                # read (DSHOW on this camera returns ret=False on read 1).
-                cap.read()
-                return device, cap, frame
-
-            cap.release()
-        except cv2.error:
-            pass
-        except Exception:
-            pass
+            except Exception as e:
+                self._logger.debug(
+                    "Probe Camera %d: %s raised unexpected error: %s",
+                    index, backend.name.lower(), e,
+                )
 
         return (
             CameraDevice(
                 index=index, name=f"Camera {index}",
-                backend=Backend.DIRECTSHOW, is_available=False,
+                backend=candidates[0], is_available=False,
             ),
             None, None,
         )
@@ -368,6 +440,7 @@ class CameraManager:
 
         self._capture = cap
         self._backend = backend
+        self._last_opened_index = index
 
         self._current_device = CameraDevice(
             index=index,

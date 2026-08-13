@@ -53,6 +53,7 @@ def main() -> int:
     toolbar.pack(fill="x", padx=8, pady=4)
 
     failures = []
+    state = {"done": False}
 
     def run_checks():
         try:
@@ -70,6 +71,9 @@ def main() -> int:
             toolbar.set_playback_stopped()
             toolbar.set_playback_finished()
             toolbar.set_no_playback()
+            toolbar.set_loop_enabled(True)
+            toolbar.set_loop_enabled(False)
+            toolbar.set_playback_loaded()
             toolbar.enable_animation()
             toolbar.set_animation_created()
             toolbar.set_animation_cleared()
@@ -161,17 +165,23 @@ def main() -> int:
             # --- every button is reachable via scrolling ---
             children = [w for w in content.winfo_children()
                         if isinstance(w, ctk.CTkButton)]
-            check("all 17 buttons exist", len(children) == 17, f"(count={len(children)})")
+            check("all 18 buttons exist", len(children) == 18, f"(count={len(children)})")
 
         except Exception as exc:  # pragma: no cover
             failures.append(exc)
             import traceback
             traceback.print_exc()
         finally:
-            root.destroy()
+            state["done"] = True
+            root.quit()
 
     root.after(300, run_checks)
     root.mainloop()
+
+    try:
+        root.destroy()
+    except Exception:
+        pass
 
     ok = not failures and all(r[1] for r in results)
     print("\nSUMMARY:", "ALL PASS" if ok else f"{sum(1 for r in results if not r[1])} FAILURES")

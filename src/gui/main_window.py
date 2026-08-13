@@ -542,6 +542,7 @@ class MainWindow(GUIAppBase):
             on_stop_playback=self._on_stop_playback,
             on_step_forward=self._on_step_forward,
             on_step_backward=self._on_step_backward,
+            on_toggle_loop=self._on_toggle_loop,
             on_create_animation=self._on_create_animation,
             on_export=self._on_export,
             on_blender=self._on_send_to_blender,
@@ -574,6 +575,15 @@ class MainWindow(GUIAppBase):
                 pass
 
         self._controller.on_status = _safe_flash
+
+        # ---- Keyboard shortcuts ----
+        self._window.bind_all("<space>", self._on_key_play_pause)
+        self._window.bind_all("<Left>", self._on_key_step_backward)
+        self._window.bind_all("<Right>", self._on_key_step_forward)
+        self._window.bind_all("<Home>", self._on_key_seek_start)
+        self._window.bind_all("<End>", self._on_key_seek_end)
+        self._window.bind_all("l", self._on_key_toggle_loop)
+        self._window.bind_all("L", self._on_key_toggle_loop)
 
         self._logger.info("MainWindow initialised.")
 
@@ -716,6 +726,8 @@ class MainWindow(GUIAppBase):
         self._toolbar.set_filters_enabled(True)
         self._toolbar.enable_animation()
         self._toolbar.set_animation_cleared()
+        self._controller.set_playback_loop(False)
+        self._toolbar.set_loop_enabled(False)
         self._status_bar.set_playback_status("Loaded")
         self._info_panel.set_playback_source(src_name)
         self._info_panel.set_playback_state("STOPPED")
@@ -754,6 +766,11 @@ class MainWindow(GUIAppBase):
             self._toolbar.set_playback_playing()
             self._status_bar.set_playback_status("Playing")
             self._status_bar.flash("Playback started", "INFO")
+        elif self._controller.is_playback_paused:
+            self._controller.play_playback()
+            self._toolbar.set_playback_resumed()
+            self._status_bar.set_playback_status("Playing")
+            self._status_bar.flash("Playback resumed", "INFO")
 
     def _on_pause_playback(self) -> None:
         """Toggle playback pause / resume."""
@@ -793,6 +810,75 @@ class MainWindow(GUIAppBase):
         self._controller.set_playback_paused()
         self._toolbar.set_playback_paused()
         self._status_bar.set_playback_status("Paused")
+
+    def _on_toggle_loop(self) -> None:
+        """Toggle loop playback for the loaded sequence."""
+        if not self._controller.has_playback_sequence:
+            return
+        enabled = not self._controller.playback_loop_enabled
+        self._controller.set_playback_loop(enabled)
+        self._toolbar.set_loop_enabled(enabled)
+        self._status_bar.flash(
+            "Loop playback ON" if enabled else "Loop playback OFF",
+            "INFO",
+        )
+
+    # ------------------------------------------------------------------
+    # Keyboard shortcuts
+    # ------------------------------------------------------------------
+
+    def _on_key_play_pause(self, event=None) -> str:
+        """Space bar: toggle play / pause / resume playback."""
+        if not self._controller.has_playback_sequence:
+            return "break"
+        if self._controller.is_playback_playing:
+            self._on_pause_playback()
+        else:
+            self._on_play_playback()
+        return "break"
+
+    def _on_key_step_forward(self, event=None) -> str:
+        """Right arrow: step forward one frame."""
+        if not self._controller.has_playback_sequence:
+            return "break"
+        self._on_step_forward()
+        return "break"
+
+    def _on_key_step_backward(self, event=None) -> str:
+        """Left arrow: step backward one frame."""
+        if not self._controller.has_playback_sequence:
+            return "break"
+        self._on_step_backward()
+        return "break"
+
+    def _on_key_seek_start(self, event=None) -> str:
+        """Home: seek to the first frame."""
+        if not self._controller.has_playback_sequence:
+            return "break"
+        self._controller.seek_playback(0)
+        self._controller.set_playback_paused()
+        self._toolbar.set_playback_paused()
+        self._status_bar.set_playback_status("Paused")
+        self._update_timeline_display()
+        return "break"
+
+    def _on_key_seek_end(self, event=None) -> str:
+        """End: seek to the last frame."""
+        if not self._controller.has_playback_sequence:
+            return "break"
+        total = self._controller.playback_total_frames
+        if total > 0:
+            self._controller.seek_playback(total - 1)
+        self._controller.set_playback_paused()
+        self._toolbar.set_playback_paused()
+        self._status_bar.set_playback_status("Paused")
+        self._update_timeline_display()
+        return "break"
+
+    def _on_key_toggle_loop(self, event=None) -> str:
+        """L key: toggle loop playback."""
+        self._on_toggle_loop()
+        return "break"
 
     def _on_timeline_scrub(self, progress: float) -> None:
         """Called continuously while user drags the timeline slider.

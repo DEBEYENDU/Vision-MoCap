@@ -31,6 +31,7 @@ class PlaybackPlayer:
         self._current_frame: int = 0
         self._state: PlaybackState = PlaybackState.STOPPED
         self._speed: float = 1.0
+        self._loop: bool = False
         self._play_start_time: float = 0.0
         self._accumulated_time: float = 0.0
         self._logger = logging.getLogger(self.__class__.__name__)
@@ -141,10 +142,24 @@ class PlaybackPlayer:
         elapsed = time.perf_counter() - self._play_start_time
         total_wall = elapsed + self._accumulated_time
         sequence_time = total_wall * self._speed
-        target = int(sequence_time * self._resolve_fps())
+        fps = self._resolve_fps()
+        total_frames = len(self._sequence.pose_results)
+        target = int(sequence_time * fps)
 
-        if target >= len(self._sequence.pose_results):
-            self._current_frame = len(self._sequence.pose_results) - 1
+        if target >= total_frames:
+            if self._loop:
+                # Wrap around: subtract whole sequence durations until
+                # the time lands inside the clip again.
+                sequence_duration = total_frames / fps
+                while sequence_time >= sequence_duration:
+                    sequence_time -= sequence_duration
+                self._accumulated_time = sequence_time / self._speed
+                self._play_start_time = time.perf_counter()
+                target = int(sequence_time * fps)
+                self._current_frame = min(target, total_frames - 1)
+                return self._sequence.pose_results[self._current_frame]
+
+            self._current_frame = total_frames - 1
             self._state = PlaybackState.FINISHED
             self._logger.info("Playback finished at end of sequence.")
             return None
@@ -238,6 +253,24 @@ class PlaybackPlayer:
 
         self._speed = speed
         self._logger.debug("Playback speed set to %.2fx.", speed)
+
+    def set_loop(self, enabled: bool) -> None:
+        """Enable or disable loop playback.
+
+        When looping, reaching the end of the sequence wraps around to
+        the beginning and playback continues instead of transitioning
+        to the FINISHED state.
+
+        Args:
+            enabled: True to loop, False to stop at the end.
+        """
+        self._loop = bool(enabled)
+        self._logger.info("Loop playback %s.", "enabled" if self._loop else "disabled")
+
+    @property
+    def loop_enabled(self) -> bool:
+        """Whether loop playback is currently enabled."""
+        return self._loop
 
     # ------------------------------------------------------------------
     # Properties
