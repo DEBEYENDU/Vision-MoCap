@@ -159,11 +159,14 @@ class BlenderExporter:
                 return False
             cmd.extend(["--python", self._config.script_path])
 
+        # Log the complete command for debugging.
+        self._logger.debug("Launching Blender with command: %s", " ".join(cmd))
+
         try:
-            subprocess.Popen(
+            proc = subprocess.Popen(
                 cmd,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
             )
         except FileNotFoundError:
             self._last_error = (
@@ -179,11 +182,34 @@ class BlenderExporter:
             self._logger.error("%s", self._last_error)
             return False
 
-        self._logger.info(
-            "Blender launched (add-on: visionmocap_addon, BVH: %s).",
-            bvh_path.name,
-        )
-        return True
+        # Wait briefly and check if the process is still running;
+        # if it exits immediately we capture the output to surface the error.
+        try:
+            out, err = proc.communicate(timeout=5.0)
+            # Process still running — treat as launched.
+            if proc.returncode is None:
+                self._logger.info(
+                    "Blender launched (add-on: visionmocap_addon, BVH: %s).",
+                    bvh_path.name,
+                )
+                self._last_error = None
+                return True
+            # Process exited immediately — surface the error.
+            error_msg = err.decode(errors="replace") if err else "unknown error"
+            self._last_error = (
+                f"Blender exited immediately: {error_msg.strip()}"
+            )
+            self._logger.error("%s", self._last_error)
+            return False
+        except subprocess.TimeoutExpired:
+            # Process is still running after the timeout — consider it launched.
+            proc.kill()
+            self._logger.info(
+                "Blender launched (add-on: visionmocap_addon, BVH: %s).",
+                bvh_path.name,
+            )
+            self._last_error = None
+            return True
 
     @staticmethod
     def _cleanup_stale_temp_files() -> None:

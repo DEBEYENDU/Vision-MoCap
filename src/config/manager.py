@@ -92,7 +92,7 @@ class BlenderConfig:
 
     blender_executable: str = "blender"
     script_path: str = ""
-    auto_launch: bool = False
+    auto_launch: bool = True
 
 
 @dataclass
