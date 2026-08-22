@@ -726,6 +726,7 @@ class MainWindow(GUIAppBase):
         self._toolbar.set_filters_enabled(True)
         self._toolbar.enable_animation()
         self._toolbar.set_animation_cleared()
+        self._toolbar.enable_export()
         self._controller.set_playback_loop(False)
         self._toolbar.set_loop_enabled(False)
         self._status_bar.set_playback_status("Loaded")
@@ -744,6 +745,7 @@ class MainWindow(GUIAppBase):
         if not ok:
             return
         self._toolbar.set_animation_created()
+        self._toolbar.enable_export()
         clip = self._controller.animation_clip
         if clip is not None:
             self._info_panel.set_playback_frame(

@@ -60,6 +60,10 @@ class CsvExporter:
             writer.writerow(header)
             for frame_idx, pr in enumerate(sequence.pose_results):
                 row: List[float] = [frame_idx, pr.timestamp]
-                for lm in pr.landmarks:
+                for lm in pr.landmarks[:33]:
                     row.extend([lm.x, lm.y, lm.z, lm.visibility])
+                # Frames without landmarks (pose lost during recording)
+                # are padded with NaN so every row matches the header.
+                if len(row) < len(header):
+                    row.extend([float("nan")] * (len(header) - len(row)))
                 writer.writerow(row)

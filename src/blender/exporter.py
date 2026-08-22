@@ -122,13 +122,31 @@ class BlenderExporter:
             self._logger.error("%s", self._last_error)
             return False
 
+        # Install the add-on package under its proper module name and
+        # import the exported BVH inside the freshly launched Blender.
+        # addon_install() cannot be used here: it only accepts .zip files
+        # and would install the folder under the generic name "addon".
+        py_expr = (
+            "import shutil, pathlib, traceback, bpy\n"
+            f"src = pathlib.Path(r'{addon_dir}')\n"
+            "dst_dir = pathlib.Path("
+            "bpy.utils.user_resource('SCRIPTS', path='addons'))\n"
+            "dst_dir.mkdir(parents=True, exist_ok=True)\n"
+            "dst = dst_dir / 'visionmocap_addon'\n"
+            "shutil.copytree(src, dst, dirs_exist_ok=True)\n"
+            "bpy.ops.preferences.addon_enable(module='visionmocap_addon')\n"
+            "try:\n"
+            f"    bpy.ops.visionmocap.import_bvh(filepath=r'{bvh_path}', "
+            "target_rig='MIXAMO', auto_bake=True)\n"
+            "except Exception:\n"
+            "    traceback.print_exc()\n"
+        )
         cmd = [
             executable,
             "--python-expr",
-            f"import bpy; bpy.ops.preferences.addon_install(filepath=r'{addon_dir}'); "
-            f"bpy.ops.preferences.addon_enable(module='visionmocap_addon')",
-            "--addon",
-            str(addon_dir),
+            py_expr,
+            "--addons",
+            "visionmocap_addon",
         ]
 
         if self._config.script_path:

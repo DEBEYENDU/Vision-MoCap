@@ -49,15 +49,21 @@ class NpyExporter:
 
     @staticmethod
     def _build_array(sequence: MotionSequence) -> NDArray[np.float64]:
-        """Build a 2-D structured array from the sequence."""
+        """Build a 2-D structured array from the sequence.
+
+        Frames without landmarks (pose lost during recording) are
+        padded with NaN so the array always has the documented shape
+        ``(frames, 2 + 33 * 4)``.
+        """
         num_frames = len(sequence.pose_results)
         cols = 2 + 33 * 4  # frame, timestamp, 33 landmarks × 4 fields
         arr = np.empty((num_frames, cols), dtype=np.float64)
+        arr[:] = np.nan
 
         for i, pr in enumerate(sequence.pose_results):
             row = [float(i), pr.timestamp]
-            for lm in pr.landmarks:
+            for lm in pr.landmarks[:33]:
                 row.extend([lm.x, lm.y, lm.z, lm.visibility])
-            arr[i] = row
+            arr[i, :len(row)] = row
 
         return arr
