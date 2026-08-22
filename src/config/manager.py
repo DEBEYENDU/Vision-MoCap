@@ -90,7 +90,7 @@ class AnimationConfig:
 class BlenderConfig:
     """Configuration for Blender integration."""
 
-    blender_executable: str = "blender"
+    blender_executable: str = ""
     script_path: str = ""
     auto_launch: bool = True
 

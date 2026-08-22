@@ -13,6 +13,7 @@ of silent ``False`` returns.
 from __future__ import annotations
 
 import logging
+import os
 import subprocess
 import tempfile
 import time
@@ -112,7 +113,8 @@ class BlenderExporter:
             True on successful launch, False otherwise (reason in
             :attr:`last_error`).
         """
-        executable = self._config.blender_executable or "blender"
+        # Prefer environment variable, then config fallback
+        executable = os.environ.get("BLENDER_EXECUTABLE") or self._config.blender_executable or "blender"
         addon_dir = Path(__file__).resolve().parent / "addon"
 
         if not addon_dir.is_dir():
